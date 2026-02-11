@@ -1,6 +1,7 @@
 import { WatchlistFilm, LogEntry, ListEntry, LogEntryFilm, ActivityItem } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
 import { imdbToLetterboxdCache } from '../../lib/cache.js';
+import { serverConfig } from '../../config/index.js';
 
 const logger = createChildLogger('catalog-service');
 
@@ -39,6 +40,14 @@ function getPosterUrl(film: WatchlistFilm): string | undefined {
 }
 
 /**
+ * Build poster URL with rating badge overlay via proxy
+ */
+function buildPosterUrl(originalPoster: string | undefined, rating?: number): string | undefined {
+  if (!originalPoster || !rating) return originalPoster;
+  return `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(originalPoster)}&rating=${rating.toFixed(1)}`;
+}
+
+/**
  * Transform Letterboxd watchlist film to Stremio Meta
  */
 export function transformToStremioMeta(film: WatchlistFilm): StremioMeta | null {
@@ -53,7 +62,7 @@ export function transformToStremioMeta(film: WatchlistFilm): StremioMeta | null 
     id: imdbId,
     type: 'movie',
     name: film.name,
-    poster: getPosterUrl(film),
+    poster: buildPosterUrl(getPosterUrl(film), film.rating),
     year: film.releaseYear,
     genres: film.genres?.map((g) => g.name),
     director: film.directors?.map((d) => d.name),
@@ -129,7 +138,7 @@ export function transformLogEntryToMeta(entry: LogEntry): StremioMeta | null {
     id: imdbId,
     type: 'movie',
     name: entry.film.name,
-    poster: getLogEntryPosterUrl(entry.film),
+    poster: buildPosterUrl(getLogEntryPosterUrl(entry.film), entry.rating),
     year: entry.film.releaseYear,
     genres: entry.film.genres?.map((g) => g.name),
     director: entry.film.directors?.map((d) => d.name),
@@ -176,7 +185,7 @@ export function transformListEntryToMeta(entry: ListEntry): StremioMeta | null {
     id: imdbId,
     type: 'movie',
     name: film.name,
-    poster: getPosterUrl(film),
+    poster: buildPosterUrl(getPosterUrl(film), film.rating),
     year: film.releaseYear,
     genres: film.genres?.map((g) => g.name),
     director: film.directors?.map((d) => d.name),
@@ -254,11 +263,13 @@ function transformActivityItemToMeta(item: ActivityItem): StremioMeta | null {
     description = `Activity by ${memberName}`;
   }
 
+  const activityRating = item.rating ?? item.diaryEntry?.rating;
+
   return {
     id: imdbId,
     type: 'movie',
     name: film.name,
-    poster: getPosterUrl(film),
+    poster: buildPosterUrl(getPosterUrl(film), activityRating),
     year: film.releaseYear,
     genres: film.genres?.map((g) => g.name),
     director: film.directors?.map((d) => d.name),
