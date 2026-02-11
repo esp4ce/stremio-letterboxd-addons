@@ -205,7 +205,7 @@ export function generateDynamicManifest(
     // Filter base catalogs according to preferences
     const filteredBase = baseCatalogs.filter((cat) => {
       const prefKey = catalogIdMap[cat.id];
-      return prefKey ? preferences.catalogs[prefKey] : true;
+      return prefKey ? (preferences.catalogs[prefKey] ?? true) : true;
     });
 
     // Filter own lists according to preferences
