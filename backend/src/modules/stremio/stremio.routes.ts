@@ -28,7 +28,6 @@ import {
 } from './catalog.service.js';
 import { buildLetterboxdStreams } from './meta.service.js';
 import { createChildLogger } from '../../lib/logger.js';
-import { userRatingCache } from '../../lib/cache.js';
 import { userListsCache } from '../../lib/cache.js';
 import { trackEvent } from '../../lib/metrics.js';
 
@@ -555,8 +554,6 @@ export async function stremioRoutes(app: FastifyInstance) {
         // Perform the update
         const result = await client.updateFilmRelationship(filmId, update);
 
-        // Invalidate cached rating so meta reflects the new state immediately
-        userRatingCache.delete(`rating:${userId}:${filmId}`);
 
         // Get action labels for response
         const actionLabels: Record<string, { active: string; inactive: string }> = {
@@ -838,8 +835,6 @@ export async function stremioRoutes(app: FastifyInstance) {
 
         await client.updateFilmRelationship(filmId, update);
 
-        // Invalidate cached rating so meta reflects the new state immediately
-        userRatingCache.delete(`rating:${userId}:${filmId}`);
 
         const message = isRemove ? 'Rating removed' : `Rated &#9733; ${rating!.toFixed(1)}`;
         const stremioDeepLink = imdbId ? `stremio:///detail/movie/${imdbId}` : null;

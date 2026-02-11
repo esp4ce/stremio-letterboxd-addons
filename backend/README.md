@@ -22,8 +22,6 @@ cp .env.example .env
 ```
 
 Variables requises:
-- `LETTERBOXD_CLIENT_ID` - ID client API Letterboxd
-- `LETTERBOXD_CLIENT_SECRET` - Secret client API Letterboxd
 - `ENCRYPTION_KEY` - Clé 64 caractères hex (générer avec `openssl rand -hex 32`)
 - `JWT_SECRET` - Secret JWT min 32 caractères
 

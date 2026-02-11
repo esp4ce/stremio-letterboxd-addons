@@ -1,6 +1,6 @@
 import { AuthenticatedClient, LetterboxdFilm } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
-import { imdbToLetterboxdCache, userRatingCache, cinemetaCache } from '../../lib/cache.js';
+import { imdbToLetterboxdCache, cinemetaCache } from '../../lib/cache.js';
 import type { CachedRating, CinemetaFilmData } from '../../lib/cache.js';
 import { serverConfig } from '../../config/index.js';
 
@@ -212,13 +212,8 @@ export async function getFilmRatingData(
   letterboxdFilmId: string,
   userId: string
 ): Promise<CachedRating> {
-  const cacheKey = `rating:${userId}:${letterboxdFilmId}`;
-  const cached = userRatingCache.get(cacheKey);
-  if (cached) {
-    logger.debug({ cacheKey }, 'Rating cache hit');
-    return cached;
-  }
-
+  // Always fetch fresh user relationship data so meta page reflects current state
+  // (watched/liked/watchlist/rating must be up-to-date when user opens a film)
   logger.info({ letterboxdFilmId }, 'Fetching film relationship and statistics...');
 
   const [relationship, statistics] = await Promise.all([
@@ -235,8 +230,6 @@ export async function getFilmRatingData(
     communityRating: statistics.rating ?? null,
     communityRatings: statistics.counts.ratings,
   };
-
-  userRatingCache.set(cacheKey, rating);
 
   return rating;
 }
