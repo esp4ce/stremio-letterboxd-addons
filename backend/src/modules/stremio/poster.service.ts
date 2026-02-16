@@ -1,13 +1,8 @@
 import sharp from 'sharp';
-import { createCache } from '../../lib/cache.js';
+import { posterCache } from '../../lib/cache.js';
 import { createChildLogger } from '../../lib/logger.js';
 
 const logger = createChildLogger('poster-service');
-
-const posterCache = createCache<Buffer>({
-  maxSize: 500,
-  ttl: 60 * 60 * 1000, // 1 hour
-});
 
 /**
  * Generate a poster image with a rating badge overlay

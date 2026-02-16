@@ -9,6 +9,7 @@ import { authRoutes } from './modules/auth/auth.routes.js';
 import { letterboxdRoutes } from './modules/letterboxd/letterboxd.routes.js';
 import { stremioRoutes } from './modules/stremio/stremio.routes.js';
 import { metricsRoutes } from './modules/metrics/metrics.routes.js';
+import { dashboardRoutes } from './modules/dashboard/dashboard.routes.js';
 import { generateBaseManifest } from './modules/stremio/stremio.service.js';
 
 export async function buildApp(httpsOptions?: ServerOptions) {
@@ -67,6 +68,7 @@ export async function buildApp(httpsOptions?: ServerOptions) {
   await app.register(letterboxdRoutes);
   await app.register(stremioRoutes);
   await app.register(metricsRoutes);
+  await app.register(dashboardRoutes);
 
   app.addHook('onRequest', async (request) => {
     logger.debug(
@@ -76,6 +78,12 @@ export async function buildApp(httpsOptions?: ServerOptions) {
       },
       'Incoming request'
     );
+
+    // Memory usage warning (Railway Hobby limit: 512MB)
+    const memUsage = process.memoryUsage().heapUsed / 1024 / 1024;
+    if (memUsage > 400) {
+      logger.warn({ memoryMB: memUsage.toFixed(2) }, 'High memory usage detected');
+    }
   });
 
   app.addHook('onResponse', async (request, reply) => {

@@ -14,6 +14,7 @@ export const userPreferencesSchema = z.object({
     friends: z.boolean(),
     popular: z.boolean().default(false),
     top250: z.boolean().default(true),
+    likedFilms: z.boolean().default(false),
   }),
   ownLists: z.array(z.string()),
   externalLists: z.array(
@@ -24,6 +25,9 @@ export const userPreferencesSchema = z.object({
       filmCount: z.number(),
     })
   ),
+  showActions: z.boolean().default(true),
+  showRatings: z.boolean().default(true),
+  catalogNames: z.record(z.string()).optional(),
 });
 
 export const loginResponseSchema = z.object({

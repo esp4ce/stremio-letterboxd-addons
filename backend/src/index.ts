@@ -5,11 +5,18 @@ import { buildApp } from './app.js';
 import { initDb, closeDb } from './db/index.js';
 import { config, letterboxdConfig } from './config/index.js';
 import { logger, createChildLogger } from './lib/logger.js';
+import { cleanupOldEvents } from './lib/metrics.js';
 
 async function main() {
   logger.info('Starting Stremio Letterboxd Backend...');
 
   initDb();
+
+  // Cleanup old events (keep last 90 days)
+  const deletedCount = cleanupOldEvents(90);
+  if (deletedCount > 0) {
+    logger.info({ deletedCount }, 'Cleaned up old events');
+  }
 
   configure({
     clientId: letterboxdConfig.clientId,

@@ -131,7 +131,7 @@ function getLogEntryPosterUrl(film: LogEntryFilm): string | undefined {
 /**
  * Transform LogEntry to Stremio Meta
  */
-export function transformLogEntryToMeta(entry: LogEntry): StremioMeta | null {
+export function transformLogEntryToMeta(entry: LogEntry, showRatings = true): StremioMeta | null {
   const imdbId = getLogEntryImdbId(entry.film);
 
   if (!imdbId) {
@@ -159,7 +159,7 @@ export function transformLogEntryToMeta(entry: LogEntry): StremioMeta | null {
     id: imdbId,
     type: 'movie',
     name: entry.film.name,
-    poster: buildPosterUrl(getLogEntryPosterUrl(entry.film), entry.rating),
+    poster: showRatings ? buildPosterUrl(getLogEntryPosterUrl(entry.film), entry.rating) : getLogEntryPosterUrl(entry.film),
     year: entry.film.releaseYear,
     genres: entry.film.genres?.map((g) => g.name),
     director: entry.film.directors?.map((d) => d.name),
@@ -171,12 +171,12 @@ export function transformLogEntryToMeta(entry: LogEntry): StremioMeta | null {
  * Transform array of LogEntries to Stremio metas
  * Deduplicates by IMDb ID (keeps first occurrence)
  */
-export function transformLogEntriesToMetas(entries: LogEntry[]): StremioMeta[] {
+export function transformLogEntriesToMetas(entries: LogEntry[], showRatings = true): StremioMeta[] {
   const metas: StremioMeta[] = [];
   const seenIds = new Set<string>();
 
   for (const entry of entries) {
-    const meta = transformLogEntryToMeta(entry);
+    const meta = transformLogEntryToMeta(entry, showRatings);
     if (meta && !seenIds.has(meta.id)) {
       metas.push(meta);
       seenIds.add(meta.id);
@@ -247,7 +247,7 @@ function getActivityFilm(item: ActivityItem): WatchlistFilm | undefined {
 /**
  * Transform ActivityItem to Stremio Meta
  */
-function transformActivityItemToMeta(item: ActivityItem): StremioMeta | null {
+function transformActivityItemToMeta(item: ActivityItem, showRatings = true): StremioMeta | null {
   const film = getActivityFilm(item);
   if (!film) return null;
 
@@ -292,7 +292,7 @@ function transformActivityItemToMeta(item: ActivityItem): StremioMeta | null {
     id: imdbId,
     type: 'movie',
     name: film.name,
-    poster: buildPosterUrl(getPosterUrl(film), film.rating),
+    poster: showRatings ? buildPosterUrl(getPosterUrl(film), film.rating) : getPosterUrl(film),
     year: film.releaseYear,
     genres: film.genres?.map((g) => g.name),
     director: film.directors?.map((d) => d.name),
@@ -304,7 +304,7 @@ function transformActivityItemToMeta(item: ActivityItem): StremioMeta | null {
  * Transform array of ActivityItems to Stremio metas
  * Filters to friends only (excludes own activity) and deduplicates by IMDb ID
  */
-export function transformActivityToMetas(items: ActivityItem[], excludeMemberId: string): StremioMeta[] {
+export function transformActivityToMetas(items: ActivityItem[], excludeMemberId: string, showRatings = true): StremioMeta[] {
   const metas: StremioMeta[] = [];
   const seenIds = new Set<string>();
 
@@ -312,7 +312,7 @@ export function transformActivityToMetas(items: ActivityItem[], excludeMemberId:
     // Skip own activity
     if (item.member.id === excludeMemberId) continue;
 
-    const meta = transformActivityItemToMeta(item);
+    const meta = transformActivityItemToMeta(item, showRatings);
     if (meta && !seenIds.has(meta.id)) {
       metas.push(meta);
       seenIds.add(meta.id);

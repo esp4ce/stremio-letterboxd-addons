@@ -50,6 +50,34 @@ export interface StremioCatalog {
 // Keep the old interface name for backwards compatibility
 export type StemioCatalog = StremioCatalog;
 
+export const SORT_EXTRA_OPTIONS = [
+  "Recently Added", "Oldest Added", "Film Name",
+  "Release Date (Newest)", "Release Date (Oldest)",
+  "Your Rating (High)", "Your Rating (Low)",
+  "Average Rating (High)", "Average Rating (Low)",
+  "Popularity", "Popularity (Week)", "Popularity (Month)",
+  "Shortest", "Longest",
+];
+
+export const SORT_LABEL_TO_API: Record<string, string> = {
+  "Recently Added": "DateLatestFirst",
+  "Oldest Added": "DateEarliestFirst",
+  "Film Name": "FilmName",
+  "Release Date (Newest)": "ReleaseDateLatestFirst",
+  "Release Date (Oldest)": "ReleaseDateEarliestFirst",
+  "Your Rating (High)": "AuthenticatedMemberRatingHighToLow",
+  "Your Rating (Low)": "AuthenticatedMemberRatingLowToHigh",
+  "Average Rating (High)": "AverageRatingHighToLow",
+  "Average Rating (Low)": "AverageRatingLowToHigh",
+  "Popularity": "FilmPopularity",
+  "Popularity (Week)": "FilmPopularityThisWeek",
+  "Popularity (Month)": "FilmPopularityThisMonth",
+  "Shortest": "FilmDurationShortestFirst",
+  "Longest": "FilmDurationLongestFirst",
+};
+
+const SORT_EXTRA = { name: 'sort', options: SORT_EXTRA_OPTIONS, isRequired: false };
+
 /**
  * Generate base catalogs for a user
  */
@@ -59,19 +87,25 @@ function getBaseCatalogs(displayName: string): StremioCatalog[] {
       type: 'movie',
       id: 'letterboxd-watchlist',
       name: `${displayName}'s Watchlist`,
-      extra: [{ name: 'skip', isRequired: false }],
+      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
     },
     {
       type: 'movie',
       id: 'letterboxd-diary',
       name: `${displayName}'s Recent Diary`,
-      extra: [{ name: 'skip', isRequired: false }],
+      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
     },
     {
       type: 'movie',
       id: 'letterboxd-friends',
       name: `${displayName}'s Friends Activity`,
       extra: [{ name: 'skip', isRequired: false }],
+    },
+    {
+      type: 'movie',
+      id: 'letterboxd-liked-films',
+      name: `${displayName}'s Liked Films`,
+      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
     },
     {
       type: 'movie',
@@ -92,6 +126,7 @@ const catalogIdMap: Record<string, keyof UserPreferences['catalogs']> = {
   'letterboxd-watchlist': 'watchlist',
   'letterboxd-diary': 'diary',
   'letterboxd-friends': 'friends',
+  'letterboxd-liked-films': 'likedFilms',
   'letterboxd-popular': 'popular',
   'letterboxd-top250': 'top250',
 };
@@ -104,7 +139,7 @@ function listsToStremioCatalogs(lists: UserList[]): StremioCatalog[] {
     type: 'movie',
     id: `letterboxd-list-${list.id}`,
     name: list.name,
-    extra: [{ name: 'skip', isRequired: false }],
+    extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
   }));
 }
 
@@ -178,7 +213,17 @@ export function generatePublicManifest(
       type: 'movie',
       id: 'letterboxd-watchlist',
       name: watchlistName,
-      extra: [{ name: 'skip', isRequired: false }],
+      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+    });
+  }
+
+  if (cfg.u && cfg.c.likedFilms) {
+    const likedName = displayName ? `${displayName}'s Liked Films` : 'Liked Films';
+    catalogs.push({
+      type: 'movie',
+      id: 'letterboxd-liked-films',
+      name: likedName,
+      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
     });
   }
 
@@ -187,8 +232,16 @@ export function generatePublicManifest(
       type: 'movie',
       id: `letterboxd-list-${listId}`,
       name: listNames?.get(listId) || `List ${listId}`,
-      extra: [{ name: 'skip', isRequired: false }],
+      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
     });
+  }
+
+  // Apply custom catalog names from config
+  if (cfg.n) {
+    for (const cat of catalogs) {
+      const customName = cfg.n[cat.id];
+      if (customName) cat.name = customName;
+    }
   }
 
   const namePart = displayName ? ` for ${displayName}` : '';
@@ -278,10 +331,18 @@ export function generateDynamicManifest(
         type: 'movie',
         id: `letterboxd-list-${ext.id}`,
         name: `${ext.name} (${ext.owner})`,
-        extra: [{ name: 'skip', isRequired: false }],
+        extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
       }));
 
     catalogs = [...filteredBase, ...ownListCatalogs, ...externalListCatalogs];
+
+    // Apply custom catalog names
+    if (preferences.catalogNames) {
+      for (const cat of catalogs) {
+        const customName = preferences.catalogNames[cat.id];
+        if (customName) cat.name = customName;
+      }
+    }
   } else {
     // No preferences: include everything (backwards compatible)
     const listCatalogs = listsToStremioCatalogs(lists);

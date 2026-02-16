@@ -21,12 +21,13 @@ export const envSchema = z.object({
     .regex(/^[0-9a-fA-F]+$/, 'ENCRYPTION_KEY must be hexadecimal'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_TTL: z.string().default('7d'),
+  DASHBOARD_PASSWORD: z.string().min(8, 'DASHBOARD_PASSWORD must be at least 8 characters'),
 
   DATABASE_PATH: z.string().default('./data/stremio-letterboxd.db'),
 
   CACHE_MAX_SIZE: z.coerce.number().default(1000),
   CACHE_FILM_TTL: z.coerce.number().default(3600),
-  CACHE_WATCHLIST_TTL: z.coerce.number().default(120),
+  CACHE_WATCHLIST_TTL: z.coerce.number().default(300),
 
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   LOG_LEVEL: z

@@ -6,9 +6,11 @@ export const publicConfigSchema = z.object({
     watchlist: z.boolean().optional(),
     popular: z.boolean(),
     top250: z.boolean(),
+    likedFilms: z.boolean().optional(),
   }),
   l: z.array(z.string()),
   r: z.boolean(),
+  n: z.record(z.string(), z.string()).optional(),
 });
 
 export type PublicConfig = z.infer<typeof publicConfigSchema>;

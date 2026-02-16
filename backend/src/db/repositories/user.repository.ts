@@ -2,7 +2,7 @@ import { getDb } from '../index.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
 
 export interface UserPreferences {
-  catalogs: { watchlist: boolean; diary: boolean; friends: boolean; popular: boolean; top250: boolean };
+  catalogs: { watchlist: boolean; diary: boolean; friends: boolean; popular: boolean; top250: boolean; likedFilms: boolean };
   ownLists: string[];
   externalLists: Array<{
     id: string;
@@ -10,6 +10,9 @@ export interface UserPreferences {
     owner: string;
     filmCount: number;
   }>;
+  showActions?: boolean;
+  showRatings?: boolean;
+  catalogNames?: Record<string, string>;
 }
 
 export interface User {

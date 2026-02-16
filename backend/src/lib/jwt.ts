@@ -58,3 +58,28 @@ export async function verifyUserToken(
     return null;
   }
 }
+
+// Generic JWT functions for dashboard and other non-user-specific uses
+export async function signJwtToken(payload: Record<string, unknown>, ttl?: string): Promise<string> {
+  const ttlSeconds = parseTtl(ttl ?? jwtConfig.ttl);
+
+  const jwt = new SignJWT(payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + ttlSeconds);
+
+  if (payload['sub'] && typeof payload['sub'] === 'string') {
+    jwt.setSubject(payload['sub']);
+  }
+
+  return jwt.sign(getSecret());
+}
+
+export async function verifyJwtToken(token: string): Promise<JWTPayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, getSecret());
+    return payload;
+  } catch {
+    return null;
+  }
+}

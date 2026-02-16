@@ -1,6 +1,6 @@
 {
   "name": "stremio-letterboxd-backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -11,7 +11,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@esp4ce/letterboxd-client": "^1.0.0",
+    "@esp4ce/letterboxd-client": "^1.2.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/rate-limit": "^10.0.0",
     "better-sqlite3": "^11.0.0",

@@ -295,7 +295,8 @@ export interface LetterboxdStream {
 export async function buildLetterboxdStreams(
   client: AuthenticatedClient,
   imdbId: string,
-  userId: string
+  userId: string,
+  showActions: boolean = true
 ): Promise<LetterboxdStream[]> {
   logger.info({ imdbId, userId }, 'Building Letterboxd streams...');
 
@@ -339,47 +340,49 @@ export async function buildLetterboxdStreams(
     behaviorHints: { notWebReady: true, bingeGroup },
   });
 
-  // ── Stream 2: Rate action ──
-  const encodedFilmName = encodeURIComponent(film.name);
-  if (rating.userRating !== null) {
+  if (showActions) {
+    // ── Stream 2: Rate action ──
+    const encodedFilmName = encodeURIComponent(film.name);
+    if (rating.userRating !== null) {
+      streams.push({
+        name: `★ ${rating.userRating.toFixed(1)}`,
+        description: 'Change your Letterboxd rating',
+        externalUrl: `${baseUrl}/action/${userId}/rate/${letterboxdFilmId}?imdb=${imdbId}&current=${rating.userRating}&name=${encodedFilmName}`,
+        behaviorHints: { notWebReady: true, bingeGroup },
+      });
+    } else {
+      streams.push({
+        name: '★ Rate',
+        description: 'Rate this film on Letterboxd',
+        externalUrl: `${baseUrl}/action/${userId}/rate/${letterboxdFilmId}?imdb=${imdbId}&name=${encodedFilmName}`,
+        behaviorHints: { notWebReady: true, bingeGroup },
+      });
+    }
+
+    // ── Stream 3: Watched toggle ──
     streams.push({
-      name: `★ ${rating.userRating.toFixed(1)}`,
-      description: 'Change your Letterboxd rating',
-      externalUrl: `${baseUrl}/action/${userId}/rate/${letterboxdFilmId}?imdb=${imdbId}&current=${rating.userRating}&name=${encodedFilmName}`,
+      name: rating.watched ? '✓ Watched' : '○ Watch',
+      description: rating.watched ? 'Click to remove from watched' : 'Click to mark as watched',
+      externalUrl: `${baseUrl}/action/${userId}/watched/${letterboxdFilmId}?set=${!rating.watched}&imdb=${imdbId}`,
       behaviorHints: { notWebReady: true, bingeGroup },
     });
-  } else {
+
+    // ── Stream 4: Liked toggle ──
     streams.push({
-      name: '★ Rate',
-      description: 'Rate this film on Letterboxd',
-      externalUrl: `${baseUrl}/action/${userId}/rate/${letterboxdFilmId}?imdb=${imdbId}&name=${encodedFilmName}`,
+      name: rating.liked ? '♥ Liked' : '♡ Like',
+      description: rating.liked ? 'Click to unlike' : 'Click to like on Letterboxd',
+      externalUrl: `${baseUrl}/action/${userId}/liked/${letterboxdFilmId}?set=${!rating.liked}&imdb=${imdbId}`,
+      behaviorHints: { notWebReady: true, bingeGroup },
+    });
+
+    // ── Stream 5: Watchlist toggle ──
+    streams.push({
+      name: rating.inWatchlist ? 'In Watchlist' : '+ Watchlist',
+      description: rating.inWatchlist ? 'Click to remove from watchlist' : 'Click to add to watchlist',
+      externalUrl: `${baseUrl}/action/${userId}/watchlist/${letterboxdFilmId}?set=${!rating.inWatchlist}&imdb=${imdbId}`,
       behaviorHints: { notWebReady: true, bingeGroup },
     });
   }
-
-  // ── Stream 3: Watched toggle ──
-  streams.push({
-    name: rating.watched ? '✓ Watched' : '○ Watch',
-    description: rating.watched ? 'Click to remove from watched' : 'Click to mark as watched',
-    externalUrl: `${baseUrl}/action/${userId}/watched/${letterboxdFilmId}?set=${!rating.watched}&imdb=${imdbId}`,
-    behaviorHints: { notWebReady: true, bingeGroup },
-  });
-
-  // ── Stream 4: Liked toggle ──
-  streams.push({
-    name: rating.liked ? '♥ Liked' : '♡ Like',
-    description: rating.liked ? 'Click to unlike' : 'Click to like on Letterboxd',
-    externalUrl: `${baseUrl}/action/${userId}/liked/${letterboxdFilmId}?set=${!rating.liked}&imdb=${imdbId}`,
-    behaviorHints: { notWebReady: true, bingeGroup },
-  });
-
-  // ── Stream 5: Watchlist toggle ──
-  streams.push({
-    name: rating.inWatchlist ? 'In Watchlist' : '+ Watchlist',
-    description: rating.inWatchlist ? 'Click to remove from watchlist' : 'Click to add to watchlist',
-    externalUrl: `${baseUrl}/action/${userId}/watchlist/${letterboxdFilmId}?set=${!rating.inWatchlist}&imdb=${imdbId}`,
-    behaviorHints: { notWebReady: true, bingeGroup },
-  });
 
   logger.info({ imdbId, streamCount: streams.length }, 'Built Letterboxd streams');
   return streams;

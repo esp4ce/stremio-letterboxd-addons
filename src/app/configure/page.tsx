@@ -9,7 +9,7 @@ const TOAST_DURATION = 3000;
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
 interface UserPreferences {
-  catalogs: { watchlist: boolean; diary: boolean; friends: boolean; popular: boolean; top250: boolean };
+  catalogs: { watchlist: boolean; diary: boolean; friends: boolean; popular: boolean; top250: boolean; likedFilms: boolean };
   ownLists: string[];
   externalLists: Array<{
     id: string;
@@ -17,6 +17,9 @@ interface UserPreferences {
     owner: string;
     filmCount: number;
   }>;
+  showActions?: boolean;
+  showRatings?: boolean;
+  catalogNames?: Record<string, string>;
 }
 
 interface LoginResponse {
@@ -50,9 +53,10 @@ interface UsernameValidation {
 
 interface PublicConfig {
   u?: string;
-  c: { watchlist?: boolean; popular: boolean; top250: boolean };
+  c: { watchlist?: boolean; popular: boolean; top250: boolean; likedFilms?: boolean };
   l: string[];
   r: boolean;
+  n?: Record<string, string>;
 }
 
 interface ToastItem {
@@ -71,7 +75,7 @@ function getDefaultPreferences(
   lists: LoginResponse["lists"]
 ): UserPreferences {
   return {
-    catalogs: { watchlist: true, diary: true, friends: true, popular: false, top250: true },
+    catalogs: { watchlist: true, diary: true, friends: true, popular: false, top250: true, likedFilms: false },
     ownLists: lists.map((l) => l.id),
     externalLists: [],
   };
@@ -106,8 +110,10 @@ export default function Configure() {
   const [publicCatalogs, setPublicCatalogs] = useState({ popular: true, top250: true });
   const [publicWatchlist, setPublicWatchlist] = useState(true);
   const [publicOwnLists, setPublicOwnLists] = useState<string[]>([]);
+  const [publicLikedFilms, setPublicLikedFilms] = useState(false);
   const [publicLists, setPublicLists] = useState<Array<{ id: string; name: string; owner: string; filmCount: number }>>([]);
   const [showRatings, setShowRatings] = useState(true);
+  const [publicCatalogNames, setPublicCatalogNames] = useState<Record<string, string>>({});
   const [generatedManifestUrl, setGeneratedManifestUrl] = useState<string | null>(null);
 
   // Shared
@@ -403,9 +409,14 @@ export default function Configure() {
       r: showRatings,
     };
 
+    if (Object.keys(publicCatalogNames).length > 0) {
+      cfg.n = publicCatalogNames;
+    }
+
     if (usernameValidated) {
       cfg.u = usernameValidated.username;
       cfg.c.watchlist = publicWatchlist;
+      cfg.c.likedFilms = publicLikedFilms;
       for (const listId of publicOwnLists) {
         if (!cfg.l.includes(listId)) {
           cfg.l.push(listId);
@@ -445,6 +456,8 @@ export default function Configure() {
     setPublicCatalogs({ popular: true, top250: true });
     setPublicWatchlist(true);
     setPublicOwnLists([]);
+    setPublicLikedFilms(false);
+    setPublicCatalogNames({});
     setPasswordPreview("");
     if (passwordRef.current) passwordRef.current.value = "";
   };
@@ -485,12 +498,16 @@ export default function Configure() {
           onPublicCatalogsChange={setPublicCatalogs}
           publicWatchlist={publicWatchlist}
           onPublicWatchlistChange={setPublicWatchlist}
+          publicLikedFilms={publicLikedFilms}
+          onPublicLikedFilmsChange={setPublicLikedFilms}
           publicOwnLists={publicOwnLists}
           onPublicOwnListsChange={setPublicOwnLists}
           publicLists={publicLists}
           onRemovePublicList={(id) => setPublicLists((prev) => prev.filter((l) => l.id !== id))}
           showRatings={showRatings}
           onShowRatingsChange={setShowRatings}
+          publicCatalogNames={publicCatalogNames}
+          onPublicCatalogNamesChange={setPublicCatalogNames}
           externalListUrl={externalListUrl}
           onExternalListUrlChange={setExternalListUrl}
           onAddExternalList={handleResolvePublicList}
