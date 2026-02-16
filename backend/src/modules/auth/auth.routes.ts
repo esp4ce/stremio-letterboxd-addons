@@ -248,7 +248,10 @@ export async function authRoutes(app: FastifyInstance) {
 
         if (pageResponse.ok) {
           const html = await pageResponse.text();
-          const boxdMatch = html.match(/https?:\/\/boxd\.it\/([A-Za-z0-9]+)/);
+          // Target <link rel="shortlink"> to avoid matching member/film shortlinks
+          const boxdMatch = html.match(/<link[^>]+rel="shortlink"[^>]+href="https?:\/\/boxd\.it\/([A-Za-z0-9]+)"/) ||
+            html.match(/href="https?:\/\/boxd\.it\/([A-Za-z0-9]+)"[^>]*rel="shortlink"/) ||
+            html.match(/https?:\/\/boxd\.it\/([A-Za-z0-9]+)/);
 
           if (boxdMatch) {
             const listId = boxdMatch[1]!;
@@ -295,29 +298,39 @@ export async function authRoutes(app: FastifyInstance) {
           return reply.status(404).send({ error: 'List not found' });
         }
 
-        const listsResponse = await callWithAppToken((token) =>
-          rawSearchLists(token, { member: member.id, memberRelationship: 'Owner', perPage: 50 })
-        );
-
         const normalizeSlug = (name: string) =>
           name.toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '');
 
-        const matchedList = listsResponse.items.find(
-          (l) => normalizeSlug(l.name) === listSlug!.toLowerCase()
-        );
+        // Paginate through member's lists to find the matching slug
+        let cursor: string | undefined;
+        let page = 0;
 
-        if (!matchedList) {
-          return reply.status(404).send({ error: 'List not found' });
+        while (page < 5) {
+          page++;
+          const listsResponse = await callWithAppToken((token) =>
+            rawSearchLists(token, { member: member.id, memberRelationship: 'Owner', perPage: 100, cursor })
+          );
+
+          const matchedList = listsResponse.items.find(
+            (l) => normalizeSlug(l.name) === listSlug!.toLowerCase()
+          );
+
+          if (matchedList) {
+            return {
+              id: matchedList.id,
+              name: matchedList.name,
+              owner: member.displayName || member.username,
+              filmCount: matchedList.filmCount,
+            };
+          }
+
+          cursor = listsResponse.cursor;
+          if (!cursor) break;
         }
 
-        return {
-          id: matchedList.id,
-          name: matchedList.name,
-          owner: member.displayName || member.username,
-          filmCount: matchedList.filmCount,
-        };
+        return reply.status(404).send({ error: 'List not found' });
       } catch {
         return reply.status(500).send({ error: 'Failed to resolve list' });
       }
