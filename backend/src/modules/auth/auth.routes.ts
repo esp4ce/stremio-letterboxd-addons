@@ -10,6 +10,7 @@ import {
 import { loginRateLimit } from '../../middleware/rate-limit.js';
 import { trackEvent } from '../../lib/metrics.js';
 import { callWithAppToken } from '../../lib/app-client.js';
+import { config } from '../../config/index.js';
 import {
   searchMemberByUsername as rawSearchMemberByUsername,
   getMember as rawGetMember,
@@ -18,6 +19,53 @@ import {
   getList as rawGetList,
   LetterboxdApiError,
 } from '../letterboxd/letterboxd.client.js';
+
+const BOXD_SHORTLINK_REGEX = /https?:\/\/boxd\.it\/([A-Za-z0-9]+)/;
+const LIST_SHORTLINK_TAG_REGEX = /<link[^>]+rel="shortlink"[^>]+href="https?:\/\/boxd\.it\/([A-Za-z0-9]+)"/;
+const LIST_SHORTLINK_TAG_ALT_REGEX = /href="https?:\/\/boxd\.it\/([A-Za-z0-9]+)"[^>]*rel="shortlink"/;
+const LIST_LIKEABLE_IDENTIFIER_REGEX =
+  /data-likeable-identifier=(?:"|')\{"lid":"([A-Za-z0-9]+)","uid":"filmlist:[^"']+","type":"list","typeName":"list"\}(?:"|')/;
+
+const BROWSER_FETCH_OPTIONS: RequestInit = {
+  headers: { 'User-Agent': config.LETTERBOXD_USER_AGENT },
+  redirect: 'follow',
+};
+
+async function fetchPageHtml(url: string): Promise<string | null> {
+  const response = await fetch(url, BROWSER_FETCH_OPTIONS);
+  if (!response.ok) return null;
+  return response.text();
+}
+
+function extractBoxdShortlinkId(html: string): string | null {
+  return html.match(BOXD_SHORTLINK_REGEX)?.[1] ?? null;
+}
+
+function extractListIdFromListPage(html: string): string | null {
+  const shortlinkId =
+    html.match(LIST_SHORTLINK_TAG_REGEX)?.[1] ??
+    html.match(LIST_SHORTLINK_TAG_ALT_REGEX)?.[1];
+  const likeableId = html.match(LIST_LIKEABLE_IDENTIFIER_REGEX)?.[1];
+  return shortlinkId ?? likeableId ?? null;
+}
+
+async function resolveMemberByUsername(username: string) {
+  const profileUrl = `https://letterboxd.com/${username}/`;
+  const profileHtml = await fetchPageHtml(profileUrl);
+
+  if (profileHtml) {
+    const memberLid = extractBoxdShortlinkId(profileHtml);
+    if (memberLid) {
+      try {
+        return await callWithAppToken((token) => rawGetMember(token, memberLid));
+      } catch {
+        // fallback to API search
+      }
+    }
+  }
+
+  return callWithAppToken((token) => rawSearchMemberByUsername(token, username));
+}
 
 export async function authRoutes(app: FastifyInstance) {
   app.post(
@@ -142,34 +190,7 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       try {
-        // Try direct lookup first (fetch public profile page to get member LID)
-        const profileUrl = `https://letterboxd.com/${parsed.data.username}/`;
-        const pageResponse = await fetch(profileUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' },
-          redirect: 'follow',
-        });
-
-        let member = null;
-
-        if (pageResponse.ok) {
-          const html = await pageResponse.text();
-          // Extract boxd.it shortlink which contains the member LID
-          const boxdMatch = html.match(/https?:\/\/boxd\.it\/([A-Za-z0-9]+)/);
-          if (boxdMatch) {
-            try {
-              member = await callWithAppToken((token) =>
-                rawGetMember(token, boxdMatch[1]!)
-              );
-            } catch { /* fallback to search */ }
-          }
-        }
-
-        // Fallback: search by username
-        if (!member) {
-          member = await callWithAppToken((token) =>
-            rawSearchMemberByUsername(token, parsed.data.username)
-          );
-        }
+        const member = await resolveMemberByUsername(parsed.data.username);
 
         if (!member) {
           return { valid: false };
@@ -241,32 +262,23 @@ export async function authRoutes(app: FastifyInstance) {
           ? parsed.data.url
           : `https://${parsed.data.url}`;
 
-        const pageResponse = await fetch(normalizedUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible)' },
-          redirect: 'follow',
-        });
+        const pageHtml = await fetchPageHtml(normalizedUrl);
 
-        if (pageResponse.ok) {
-          const html = await pageResponse.text();
-          // Target <link rel="shortlink"> to avoid matching member/film shortlinks
-          const boxdMatch = html.match(/<link[^>]+rel="shortlink"[^>]+href="https?:\/\/boxd\.it\/([A-Za-z0-9]+)"/) ||
-            html.match(/href="https?:\/\/boxd\.it\/([A-Za-z0-9]+)"[^>]*rel="shortlink"/) ||
-            html.match(/https?:\/\/boxd\.it\/([A-Za-z0-9]+)/);
+        if (pageHtml) {
+          const listId = extractListIdFromListPage(pageHtml);
 
-          if (boxdMatch) {
-            const listId = boxdMatch[1]!;
-
-            // Block Top 250 list - already available as built-in catalog
-            if (listId === TOP_250_LIST_ID) {
-              return reply.status(400).send({
-                error: 'This list is already available as a built-in catalog (Top 250 Narrative Features)',
-              });
-            }
-
+          if (listId) {
             try {
               const list = await callWithAppToken((token) =>
                 rawGetList(token, listId)
               );
+
+              // Block Top 250 list - already available as built-in catalog
+              if (list.id === TOP_250_LIST_ID) {
+                return reply.status(400).send({
+                  error: 'This list is already available as a built-in catalog (Top 250 Narrative Features)',
+                });
+              }
 
               const ownerName = list.owner?.displayName || list.owner?.username || 'Unknown';
 
@@ -287,12 +299,10 @@ export async function authRoutes(app: FastifyInstance) {
           }
         }
 
-        // Strategy 2 (fallback): Search member by username + match list slug
+        // Strategy 2 (fallback): Resolve member reliably, then match list slug
         const [, username, listSlug] = urlMatch;
 
-        const member = await callWithAppToken((token) =>
-          rawSearchMemberByUsername(token, username!)
-        );
+        const member = await resolveMemberByUsername(username!);
 
         if (!member) {
           return reply.status(404).send({ error: 'List not found' });
@@ -318,6 +328,12 @@ export async function authRoutes(app: FastifyInstance) {
           );
 
           if (matchedList) {
+            if (matchedList.id === TOP_250_LIST_ID) {
+              return reply.status(400).send({
+                error: 'This list is already available as a built-in catalog (Top 250 Narrative Features)',
+              });
+            }
+
             return {
               id: matchedList.id,
               name: matchedList.name,
