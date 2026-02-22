@@ -310,6 +310,7 @@ export async function authRoutes(app: FastifyInstance) {
 
         const normalizeSlug = (name: string) =>
           name.toLowerCase()
+            .replace(/['’]/g, '')
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '');
 
