@@ -24,7 +24,7 @@ interface FilmLookupResult {
  * Fetch full film info from Cinemeta (public API)
  * Returns: name, year, poster, background, genres, director, cast, writer, runtime, description, trailers
  */
-async function getFullFilmInfoFromCinemeta(imdbId: string): Promise<CinemetaFilmData | null> {
+export async function getFullFilmInfoFromCinemeta(imdbId: string): Promise<CinemetaFilmData | null> {
   // Check cache first
   const cached = cinemetaCache.get(imdbId);
   if (cached) {

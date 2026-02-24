@@ -285,6 +285,11 @@ export function generateManifest(user: {
         name: 'stream',
         types: ['movie'],
       },
+      {
+        name: 'meta',
+        types: ['movie'],
+        idPrefixes: ['tt'],
+      },
     ],
     types: ['movie'],
     catalogs: getBaseCatalogs(displayName),
@@ -361,6 +366,11 @@ export function generateDynamicManifest(
       {
         name: 'stream',
         types: ['movie'],
+      },
+      {
+        name: 'meta',
+        types: ['movie'],
+        idPrefixes: ['tt'],
       },
     ],
     types: ['movie'],
