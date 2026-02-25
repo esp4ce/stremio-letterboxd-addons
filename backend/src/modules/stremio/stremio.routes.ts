@@ -116,6 +116,15 @@ function parseExtra(extra?: string): Record<string, string> {
   return params;
 }
 
+function parseSortAndSkip(extra?: string): { skip: number; sort?: string; isShuffle: boolean } {
+  const params = parseExtra(extra);
+  const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
+  const sortLabel = params['genre'];
+  const isShuffle = sortLabel === 'Shuffle';
+  const sort = sortLabel && !isShuffle ? SORT_LABEL_TO_API[sortLabel] : undefined;
+  return { skip, sort, isShuffle };
+}
+
 /**
  * Create authenticated client for a user
  */
@@ -481,11 +490,7 @@ async function handleCatalogRequest(
     return { metas: [] };
   }
 
-  const params = parseExtra(extra);
-  const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
-  const sortLabel = params['sort'];
-  const isShuffle = sortLabel === 'Shuffle';
-  const sort = sortLabel && !isShuffle ? SORT_LABEL_TO_API[sortLabel] : undefined;
+  const { skip, sort, isShuffle } = parseSortAndSkip(extra);
   const preferences = getUserPreferences(user);
   const showRatings = preferences?.showRatings !== false;
 
@@ -688,11 +693,7 @@ async function handlePublicCatalogRequest(
   extra?: string,
   memberId?: string | null
 ): Promise<{ metas: StremioMeta[] }> {
-  const params = parseExtra(extra);
-  const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
-  const sortLabel = params['sort'];
-  const isShuffle = sortLabel === 'Shuffle';
-  const sort = sortLabel && !isShuffle ? SORT_LABEL_TO_API[sortLabel] : undefined;
+  const { skip, sort, isShuffle } = parseSortAndSkip(extra);
   const showRatings = cfg.r;
 
   try {
@@ -812,11 +813,7 @@ export async function stremioRoutes(app: FastifyInstance) {
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
 
-      const params = parseExtra(request.params.extra);
-      const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
-      const sortLabel = params['sort'];
-      const isShuffle = sortLabel === 'Shuffle';
-      const sort = sortLabel && !isShuffle ? SORT_LABEL_TO_API[sortLabel] : undefined;
+      const { skip, sort, isShuffle } = parseSortAndSkip(request.params.extra);
       let result = await fetchPopularCatalogPublic(skip, true, sort);
       if (isShuffle) result = { metas: shuffleArray(result.metas) };
       return result;
@@ -842,11 +839,7 @@ export async function stremioRoutes(app: FastifyInstance) {
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
 
-      const params = parseExtra(request.params.extra);
-      const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
-      const sortLabel = params['sort'];
-      const isShuffle = sortLabel === 'Shuffle';
-      const sort = sortLabel && !isShuffle ? SORT_LABEL_TO_API[sortLabel] : undefined;
+      const { skip, sort, isShuffle } = parseSortAndSkip(request.params.extra);
       let result = await fetchTop250CatalogPublic(skip, true, sort);
       if (isShuffle) result = { metas: shuffleArray(result.metas) };
       return result;

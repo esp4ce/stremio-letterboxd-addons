@@ -44,6 +44,7 @@ export interface StremioCatalog {
     name: string;
     isRequired?: boolean;
     options?: string[];
+    optionsLimit?: number;
   }>;
 }
 
@@ -81,8 +82,8 @@ export const SORT_LABEL_TO_API: Record<string, string> = {
   "Longest": "FilmDurationLongestFirst",
 };
 
-const SORT_EXTRA = { name: 'sort', options: SORT_EXTRA_OPTIONS, isRequired: false };
-const PUBLIC_SORT_EXTRA = { name: 'sort', options: PUBLIC_SORT_EXTRA_OPTIONS, isRequired: false };
+const SORT_EXTRA = { name: 'genre', options: SORT_EXTRA_OPTIONS, isRequired: false, optionsLimit: 1 };
+const PUBLIC_SORT_EXTRA = { name: 'genre', options: PUBLIC_SORT_EXTRA_OPTIONS, isRequired: false, optionsLimit: 1 };
 
 /**
  * Generate base catalogs for a user
