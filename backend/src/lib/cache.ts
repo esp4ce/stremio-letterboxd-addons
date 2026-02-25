@@ -117,6 +117,15 @@ export const posterCache = createCache<Buffer>({
   ttl: 60 * 60 * 1000,
 });
 
+// ── User client cache (Tier 2 token reuse) ─────────────────────────────────
+
+import type { AuthenticatedClient } from '../modules/letterboxd/letterboxd.client.js';
+
+export const userClientCache = createCache<{ client: AuthenticatedClient; expiresAt: number }>({
+  maxSize: 500,
+  ttl: 30 * 60 * 1000, // 30min max, expiresAt checked manually
+});
+
 // ── Cache stats export ───────────────────────────────────────────────────────
 
 export interface CacheStats {
@@ -138,5 +147,6 @@ export function getCacheStats(): CacheStats {
     listName: { size: listNameCache.size, max: listNameCache.max },
     likedFilms: { size: likedFilmsCache.size, max: likedFilmsCache.max },
     poster: { size: posterCache.size, max: posterCache.max },
+    userClient: { size: userClientCache.size, max: userClientCache.max },
   };
 }

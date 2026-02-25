@@ -44,6 +44,7 @@ import {
   publicListCache,
   listNameCache,
   likedFilmsCache,
+  userClientCache,
 } from '../../lib/cache.js';
 import { trackEvent } from '../../lib/metrics.js';
 import { callWithAppToken } from '../../lib/app-client.js';
@@ -126,9 +127,16 @@ function parseSortAndSkip(extra?: string): { skip: number; sort?: string; isShuf
 }
 
 /**
- * Create authenticated client for a user
+ * Create authenticated client for a user (with LRU token cache)
  */
 async function createClientForUser(user: User): Promise<AuthenticatedClient> {
+  // Check cached client — reuse if token still valid (60s margin)
+  const cached = userClientCache.get(user.id);
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    logger.debug({ userId: user.id }, 'Token cache hit');
+    return cached.client;
+  }
+
   const refreshToken = getDecryptedRefreshToken(user);
   const tokens = await refreshAccessToken(refreshToken);
 
@@ -140,7 +148,9 @@ async function createClientForUser(user: User): Promise<AuthenticatedClient> {
     });
   }
 
-  return createAuthenticatedClient(
+  const expiresAt = Date.now() + tokens.expires_in * 1000;
+
+  const client = createAuthenticatedClient(
     tokens.access_token,
     tokens.refresh_token,
     user.letterboxd_id,
@@ -149,8 +159,18 @@ async function createClientForUser(user: User): Promise<AuthenticatedClient> {
         refreshToken: newTokens.refresh_token,
         tokenExpiresAt: new Date(Date.now() + newTokens.expires_in * 1000),
       });
+      // Update cache with new expiry on token refresh
+      userClientCache.set(user.id, {
+        client,
+        expiresAt: Date.now() + newTokens.expires_in * 1000,
+      });
     }
   );
+
+  userClientCache.set(user.id, { client, expiresAt });
+  logger.debug({ userId: user.id }, 'Token cache miss — refreshed');
+
+  return client;
 }
 
 /**
