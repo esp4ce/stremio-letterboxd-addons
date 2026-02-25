@@ -47,6 +47,7 @@ import {
   userClientCache,
   userCatalogCache,
   setUserCatalog,
+  invalidateUserCatalogs,
 } from '../../lib/cache.js';
 import { trackEvent } from '../../lib/metrics.js';
 import { callWithAppToken } from '../../lib/app-client.js';
@@ -1296,6 +1297,8 @@ export async function stremioRoutes(app: FastifyInstance) {
         // Perform the update
         const result = await client.updateFilmRelationship(filmId, update);
 
+        // Invalidate user catalog cache so next request reflects the change
+        invalidateUserCatalogs(userId);
 
         // Get action labels for response
         const actionLabels: Record<string, { active: string; inactive: string }> = {
@@ -1577,6 +1580,8 @@ export async function stremioRoutes(app: FastifyInstance) {
 
         await client.updateFilmRelationship(filmId, update);
 
+        // Invalidate user catalog cache so next request reflects the change
+        invalidateUserCatalogs(userId);
 
         const message = isRemove ? 'Rating removed' : `Rated &#9733; ${rating!.toFixed(1)}`;
         const stremioDeepLink = imdbId ? `stremio:///detail/movie/${imdbId}` : null;
