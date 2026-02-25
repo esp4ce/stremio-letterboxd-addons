@@ -1,0 +1,55 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a feature!
+        Please fill out this form to help us understand your request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the issue or limitation you're facing.
+      placeholder: "e.g. I can't see my Letterboxd watchlist sorted by priority..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen?
+      placeholder: "e.g. Add a sort option by date added in the watchlist catalog"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: How are you using StremBoxd?
+      options:
+        - Without login (public catalogs only)
+        - With Letterboxd login (full sync)
+        - Both
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: duplicate
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true

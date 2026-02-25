@@ -1,0 +1,57 @@
+name: Bug Report
+description: Something isn't working as expected
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: tier
+    attributes:
+      label: How are you using StremBoxd?
+      options:
+        - Without login (public catalogs only)
+        - With Letterboxd login (full sync)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      placeholder: "e.g. My watchlist shows 0 films after syncing"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      placeholder: "e.g. My 200 watchlisted films should appear"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to...
+        2. Click on...
+        3. See error
+    validations:
+      required: true
+
+  - type: input
+    id: username
+    attributes:
+      label: Letterboxd username (optional)
+      description: Helps reproduce the issue. Leave blank if you prefer.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: duplicate
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
