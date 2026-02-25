@@ -324,13 +324,19 @@ async function fetchPopularCatalog(
 ): Promise<{ metas: StremioMeta[] }> {
   const client = await createClientForUser(user);
 
-  const response = await client.getFilms({ sort: sort || 'FilmPopularityThisWeek', perPage: 20 });
-  const allMetas = transformWatchlistToMetas(response.items, showRatings);
+  const allFilms: WatchlistFilm[] = [];
+  let cursor: string | undefined;
+  let page = 0;
 
-  // Cache IMDb→Letterboxd mappings
-  for (const film of response.items) {
-    cacheFilmMapping(film);
-  }
+  do {
+    page++;
+    const response = await client.getFilms({ sort: sort || 'FilmPopularityThisWeek', perPage: 100, cursor });
+    allFilms.push(...response.items);
+    cursor = response.cursor;
+  } while (cursor && page < 10);
+
+  const allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  for (const film of allFilms) cacheFilmMapping(film);
 
   const metas = allMetas.slice(skip, skip + CATALOG_PAGE_SIZE);
 
@@ -559,12 +565,21 @@ async function fetchPopularCatalogPublic(skip: number, showRatings: boolean, sor
     return { metas };
   }
 
-  const response = await callWithAppToken((token) =>
-    rawGetFilms(token, { sort: effectiveSort, perPage: 20 })
-  );
+  const allFilms: WatchlistFilm[] = [];
+  let cursor: string | undefined;
+  let page = 0;
 
-  const allMetas = transformWatchlistToMetas(response.items, showRatings);
-  for (const film of response.items) cacheFilmMapping(film);
+  do {
+    page++;
+    const response = await callWithAppToken((token) =>
+      rawGetFilms(token, { sort: effectiveSort, perPage: 100, cursor })
+    );
+    allFilms.push(...response.items);
+    cursor = response.cursor;
+  } while (cursor && page < 10);
+
+  const allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  for (const film of allFilms) cacheFilmMapping(film);
 
   popularCatalogCache.set(cacheKey, { metas: allMetas });
   const metas = allMetas.slice(skip, skip + CATALOG_PAGE_SIZE);
