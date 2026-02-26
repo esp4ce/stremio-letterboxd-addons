@@ -1,4 +1,13 @@
+import type Database from 'better-sqlite3';
 import { getDb } from '../db/index.js';
+
+function sinceDate(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function countQuery(db: Database.Database, sql: string, ...params: unknown[]): number {
+  return (db.prepare(sql).get(...params) as { count: number }).count;
+}
 
 export type EventType =
   | 'install'
@@ -14,14 +23,16 @@ export type EventType =
   | 'action_liked'
   | 'action_watchlist'
   | 'action_rate'
-  | 'login';
+  | 'login'
+  | 'manifest_view'
+  | 'validate_username';
 
-export function trackEvent(event: EventType, userId?: string, metadata?: Record<string, unknown>): void {
+export function trackEvent(event: EventType, userId?: string, metadata?: Record<string, unknown>, anonymousId?: string): void {
   try {
     const db = getDb();
     db.prepare(
-      'INSERT INTO events (event, user_id, metadata) VALUES (?, ?, ?)'
-    ).run(event, userId ?? null, metadata ? JSON.stringify(metadata) : null);
+      'INSERT INTO events (event, user_id, metadata, anonymous_id) VALUES (?, ?, ?, ?)'
+    ).run(event, userId ?? null, metadata ? JSON.stringify(metadata) : null, anonymousId ?? null);
   } catch {
     // Silently fail — metrics should never break the app
   }
@@ -51,15 +62,10 @@ export interface MetricsSummary {
 
 export function getMetricsSummary(days: number = 30, includeEnriched: boolean = false): MetricsSummary {
   const db = getDb();
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const since = sinceDate(days);
 
-  const totalEvents = db.prepare(
-    'SELECT COUNT(*) as count FROM events WHERE created_at >= ?'
-  ).get(since) as { count: number };
-
-  const totalUsers = db.prepare(
-    'SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?'
-  ).get(since) as { count: number };
+  const totalEventsCount = countQuery(db, 'SELECT COUNT(*) as count FROM events WHERE created_at >= ?', since);
+  const totalUsersCount = countQuery(db, 'SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?', since);
 
   const eventsByType = db.prepare(
     'SELECT event, COUNT(*) as count FROM events WHERE created_at >= ? GROUP BY event ORDER BY count DESC'
@@ -89,8 +95,8 @@ export function getMetricsSummary(days: number = 30, includeEnriched: boolean = 
   }
 
   const summary: MetricsSummary = {
-    total_events: totalEvents.count,
-    total_users: totalUsers.count,
+    total_events: totalEventsCount,
+    total_users: totalUsersCount,
     events_by_type: byTypeMap,
     daily_events: dailyEvents,
     daily_active_users: dailyActiveUsers,
@@ -98,50 +104,36 @@ export function getMetricsSummary(days: number = 30, includeEnriched: boolean = 
   };
 
   if (includeEnriched) {
-    // Growth metrics
-    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const eventsLast7Days = (
-      db.prepare('SELECT COUNT(*) as count FROM events WHERE created_at >= ?').get(since7d) as { count: number }
-    ).count;
-
-    const newUsersLast7Days = (
-      db.prepare('SELECT COUNT(*) as count FROM users WHERE created_at >= ?').get(since7d) as { count: number }
-    ).count;
+    const since7d = sinceDate(7);
+    const eventsLast7Days = countQuery(db, 'SELECT COUNT(*) as count FROM events WHERE created_at >= ?', since7d);
+    const newUsersLast7Days = countQuery(db, 'SELECT COUNT(*) as count FROM users WHERE created_at >= ?', since7d);
 
     const avgEventsPerDay = dailyEvents.length > 0
       ? dailyEvents.reduce((sum, d) => sum + d.count, 0) / dailyEvents.length
       : 0;
 
-    // Database stats
     const pageCount = db.pragma('page_count', { simple: true }) as number;
     const pageSize = db.pragma('page_size', { simple: true }) as number;
     const sizeBytes = pageCount * pageSize;
-    const sizeMB = (sizeBytes / 1024 / 1024).toFixed(2);
 
-    const projectedGrowthBytes = (avgEventsPerDay * 30 * 500); // ~500 bytes per event
-    const projectedSizeMB = ((sizeBytes + projectedGrowthBytes) / 1024 / 1024).toFixed(2);
-
-    const totalEventsAll = (
-      db.prepare('SELECT COUNT(*) as count FROM events').get() as { count: number }
-    ).count;
-
+    const totalEventsAll = countQuery(db, 'SELECT COUNT(*) as count FROM events');
     const oldestEvent = (
       db.prepare('SELECT created_at FROM events ORDER BY created_at ASC LIMIT 1').get() as { created_at: string } | undefined
     )?.created_at ?? null;
 
     summary.growth = {
       eventsLast7Days,
-      eventsLast30Days: totalEvents.count,
+      eventsLast30Days: totalEventsCount,
       newUsersLast7Days,
       avgEventsPerDay: parseFloat(avgEventsPerDay.toFixed(2)),
-      projectedDbSizeIn30Days: projectedSizeMB,
+      projectedDbSizeIn30Days: ((sizeBytes + avgEventsPerDay * 30 * 500) / 1024 / 1024).toFixed(2),
     };
 
     summary.database = {
       totalEvents: totalEventsAll,
       oldestEvent,
       sizeBytes,
-      sizeMB,
+      sizeMB: (sizeBytes / 1024 / 1024).toFixed(2),
     };
   }
 
@@ -178,37 +170,16 @@ export interface TopUsersMetrics {
 
 export function getTopUsers(days: number = 30, limit: number = 50): TopUsersMetrics {
   const db = getDb();
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const since = sinceDate(days);
+  const since7d = sinceDate(7);
 
-  // Overview stats
-  const totalUsers = (
-    db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }
-  ).count;
-
-  const activeUsers7d = (
-    db.prepare('SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?')
-      .get(since7d) as { count: number }
-  ).count;
-
-  const activeUsers30d = (
-    db.prepare('SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?')
-      .get(since) as { count: number }
-  ).count;
-
-  const totalEvents = (
-    db.prepare('SELECT COUNT(*) as count FROM events').get() as { count: number }
-  ).count;
-
+  const totalUsers = countQuery(db, 'SELECT COUNT(*) as count FROM users');
+  const activeUsers7d = countQuery(db, 'SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?', since7d);
+  const activeUsers30d = countQuery(db, 'SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?', since);
+  const totalEvents = countQuery(db, 'SELECT COUNT(*) as count FROM events');
   const avgEventsPerUser = totalUsers > 0 ? totalEvents / totalUsers : 0;
-
-  const newUsersLast7d = (
-    db.prepare('SELECT COUNT(*) as count FROM users WHERE created_at >= ?').get(since7d) as { count: number }
-  ).count;
-
-  const newUsersLast30d = (
-    db.prepare('SELECT COUNT(*) as count FROM users WHERE created_at >= ?').get(since) as { count: number }
-  ).count;
+  const newUsersLast7d = countQuery(db, 'SELECT COUNT(*) as count FROM users WHERE created_at >= ?', since7d);
+  const newUsersLast30d = countQuery(db, 'SELECT COUNT(*) as count FROM users WHERE created_at >= ?', since);
 
   // Top users
   const topUsersRaw = db.prepare(`
@@ -272,9 +243,217 @@ export function getTopUsers(days: number = 30, limit: number = 50): TopUsersMetr
   };
 }
 
+export interface UniqueUsersCount {
+  authenticated: number;
+  anonymous: number;
+  total: number;
+}
+
+export function getTotalUniqueUsers(days: number = 30): UniqueUsersCount {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  const authenticated = countQuery(db, 'SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?', since);
+  const anonymous = countQuery(db, 'SELECT COUNT(DISTINCT anonymous_id) as count FROM events WHERE user_id IS NULL AND anonymous_id IS NOT NULL AND created_at >= ?', since);
+
+  return { authenticated, anonymous, total: authenticated + anonymous };
+}
+
+export interface PeakHourEntry {
+  hour: number;
+  count: number;
+}
+
+export function getPeakHours(days: number = 30): PeakHourEntry[] {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  const rows = db.prepare(
+    `SELECT CAST(strftime('%H', created_at) AS INTEGER) as hour, COUNT(*) as count
+     FROM events WHERE created_at >= ?
+     GROUP BY strftime('%H', created_at)
+     ORDER BY hour`
+  ).all(since) as PeakHourEntry[];
+
+  // Fill missing hours with 0
+  const hourMap = new Map(rows.map((r) => [r.hour, r.count]));
+  return Array.from({ length: 24 }, (_, i) => ({ hour: i, count: hourMap.get(i) ?? 0 }));
+}
+
+export interface AddonSurvival {
+  avgDays: number;
+  medianDays: number;
+}
+
+export function getAddonSurvival(days: number = 90): AddonSurvival {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  const rows = db.prepare(
+    `SELECT ROUND(julianday(MAX(created_at)) - julianday(MIN(created_at)), 1) as span_days
+     FROM events
+     WHERE user_id IS NOT NULL AND created_at >= ?
+     GROUP BY user_id
+     HAVING COUNT(*) >= 2`
+  ).all(since) as Array<{ span_days: number }>;
+
+  if (rows.length === 0) return { avgDays: 0, medianDays: 0 };
+
+  const spans = rows.map((r) => r.span_days).sort((a, b) => a - b);
+  const avg = spans.reduce((s, v) => s + v, 0) / spans.length;
+  const mid = Math.floor(spans.length / 2);
+  const median = spans.length % 2 === 0
+    ? (spans[mid - 1]! + spans[mid]!) / 2
+    : spans[mid]!;
+
+  return { avgDays: parseFloat(avg.toFixed(1)), medianDays: parseFloat(median.toFixed(1)) };
+}
+
+export interface InstallFunnel {
+  manifestViews: number;
+  catalogFetches: number;
+  authenticated: number;
+}
+
+export function getInstallFunnel(days: number = 30): InstallFunnel {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  return {
+    manifestViews: countQuery(db, "SELECT COUNT(*) as count FROM events WHERE event = 'manifest_view' AND created_at >= ?", since),
+    catalogFetches: countQuery(db, "SELECT COUNT(*) as count FROM events WHERE event LIKE 'catalog_%' AND created_at >= ?", since),
+    authenticated: countQuery(db, "SELECT COUNT(*) as count FROM events WHERE event = 'login' AND created_at >= ?", since),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Product metrics — real addon usage data
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface TopFilm {
+  imdbId: string;
+  title?: string;
+  count: number;
+}
+
+export function getTopStreamedFilms(days: number = 30, limit: number = 20): TopFilm[] {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  return db.prepare(
+    `SELECT json_extract(metadata, '$.imdbId') as imdbId, COUNT(*) as count
+     FROM events
+     WHERE event = 'stream' AND metadata IS NOT NULL AND created_at >= ?
+     GROUP BY json_extract(metadata, '$.imdbId')
+     HAVING imdbId IS NOT NULL
+     ORDER BY count DESC
+     LIMIT ?`
+  ).all(since, limit) as TopFilm[];
+}
+
+export interface TopList {
+  listId: string;
+  listName?: string;
+  count: number;
+}
+
+export function getTopAccessedLists(days: number = 30, limit: number = 20): TopList[] {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  return db.prepare(
+    `SELECT
+       json_extract(metadata, '$.listId') as listId,
+       (SELECT json_extract(e2.metadata, '$.listName')
+        FROM events e2
+        WHERE e2.event = 'catalog_list'
+          AND json_extract(e2.metadata, '$.listId') = json_extract(e.metadata, '$.listId')
+          AND json_extract(e2.metadata, '$.listName') IS NOT NULL
+        ORDER BY e2.created_at DESC LIMIT 1) as listName,
+       COUNT(*) as count
+     FROM events e
+     WHERE event = 'catalog_list' AND metadata IS NOT NULL AND created_at >= ?
+     GROUP BY json_extract(metadata, '$.listId')
+     HAVING listId IS NOT NULL
+     ORDER BY count DESC
+     LIMIT ?`
+  ).all(since, limit) as TopList[];
+}
+
+export interface ActionBreakdown {
+  action: string;
+  count: number;
+}
+
+export function getActionBreakdown(days: number = 30): ActionBreakdown[] {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  return db.prepare(
+    `SELECT event as action, COUNT(*) as count
+     FROM events
+     WHERE event LIKE 'action_%' AND created_at >= ?
+     GROUP BY event
+     ORDER BY count DESC`
+  ).all(since) as ActionBreakdown[];
+}
+
+export interface TopActionedFilm {
+  filmId: string;
+  imdbId?: string;
+  title?: string;
+  action: string;
+  count: number;
+}
+
+export function getTopActionedFilms(days: number = 30, limit: number = 20): TopActionedFilm[] {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  return db.prepare(
+    `SELECT
+       json_extract(metadata, '$.filmId') as filmId,
+       (SELECT json_extract(e2.metadata, '$.imdbId')
+        FROM events e2
+        WHERE e2.event LIKE 'action_%'
+          AND json_extract(e2.metadata, '$.filmId') = json_extract(e.metadata, '$.filmId')
+          AND json_extract(e2.metadata, '$.imdbId') IS NOT NULL
+        ORDER BY e2.created_at DESC LIMIT 1) as imdbId,
+       event as action,
+       COUNT(*) as count
+     FROM events e
+     WHERE event LIKE 'action_%' AND metadata IS NOT NULL AND created_at >= ?
+     GROUP BY json_extract(metadata, '$.filmId'), event
+     HAVING filmId IS NOT NULL
+     ORDER BY count DESC
+     LIMIT ?`
+  ).all(since, limit) as TopActionedFilm[];
+}
+
+export interface CatalogBreakdownEntry {
+  catalog: string;
+  tier: string;
+  count: number;
+}
+
+export function getCatalogBreakdown(days: number = 30): CatalogBreakdownEntry[] {
+  const db = getDb();
+  const since = sinceDate(days);
+
+  return db.prepare(
+    `SELECT event as catalog,
+            CASE WHEN user_id IS NOT NULL THEN 'auth' ELSE 'public' END as tier,
+            COUNT(*) as count
+     FROM events
+     WHERE event LIKE 'catalog_%' AND created_at >= ?
+     GROUP BY event, tier
+     ORDER BY count DESC`
+  ).all(since) as CatalogBreakdownEntry[];
+}
+
 export function cleanupOldEvents(daysToKeep: number = 90): number {
   const db = getDb();
-  const cutoffDate = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000).toISOString();
+  const cutoffDate = sinceDate(daysToKeep);
 
   const result = db.prepare('DELETE FROM events WHERE created_at < ?').run(cutoffDate);
 
