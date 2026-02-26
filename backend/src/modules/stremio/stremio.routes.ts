@@ -50,7 +50,8 @@ import {
   invalidateUserCatalogs,
   cacheMetrics,
 } from '../../lib/cache.js';
-import { trackEvent } from '../../lib/metrics.js';
+import { trackEvent, type EventType } from '../../lib/metrics.js';
+import { generateAnonId } from '../../lib/anonymous-id.js';
 import { callWithAppToken } from '../../lib/app-client.js';
 import { decodeConfig, type PublicConfig } from '../../lib/config-encoding.js';
 import { serverConfig } from '../../config/index.js';
@@ -67,6 +68,16 @@ function shuffleArray<T>(arr: T[]): T[] {
     [result[i], result[j]] = [result[j]!, result[i]!];
   }
   return result;
+}
+
+const CATALOG_EVENT_MAP: Record<string, EventType> = {
+  'letterboxd-popular': 'catalog_popular',
+  'letterboxd-top250': 'catalog_top250',
+  'letterboxd-watchlist': 'catalog_watchlist',
+};
+
+function catalogIdToEvent(id: string): EventType {
+  return CATALOG_EVENT_MAP[id] ?? (id.startsWith('letterboxd-list-') ? 'catalog_list' : 'catalog_popular');
 }
 
 const IMDB_REGEX = /^tt\d{1,10}$/;
@@ -498,7 +509,8 @@ async function handleCatalogRequest(
       }
     } else if (catalogId.startsWith('letterboxd-list-')) {
       const listId = catalogId.replace('letterboxd-list-', '');
-      trackEvent('catalog_list', userId, { listId });
+      const listName = listNameCache.get(listId);
+      trackEvent('catalog_list', userId, { listId, ...(listName && { listName }) });
       result = await fetchListCatalog(user, listId, skip, showRatings, sort);
     } else {
       logger.warn({ catalogId }, 'Unknown catalog requested');
@@ -704,7 +716,8 @@ async function handlePublicCatalogRequest(
     } else if (catalogId.startsWith('letterboxd-list-')) {
       const listId = catalogId.replace('letterboxd-list-', '');
       if (cfg.l.includes(listId)) {
-        trackEvent('catalog_list', undefined, { listId });
+        const listName = listNameCache.get(listId);
+        trackEvent('catalog_list', undefined, { listId, ...(listName && { listName }) });
         result = await fetchListCatalogPublic(listId, skip, showRatings, sort);
       }
     }
@@ -860,6 +873,8 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
+      trackEvent('manifest_view', undefined, { tier: 1 }, generateAnonId(request));
+
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
       reply.header('Cache-Control', 'public, max-age=3600');
@@ -905,6 +920,8 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
+      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, generateAnonId(request));
+
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
 
@@ -927,6 +944,8 @@ export async function stremioRoutes(app: FastifyInstance) {
       if (!cfg) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
+
+      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, generateAnonId(request));
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
@@ -1237,7 +1256,7 @@ export async function stremioRoutes(app: FastifyInstance) {
           watchlist: 'action_watchlist',
         };
         const eventType = actionEventMap[action];
-        if (eventType) trackEvent(eventType, userId, { filmId, setValue });
+        if (eventType) trackEvent(eventType, userId, { filmId, setValue, ...(imdbId && { imdbId }) });
 
         const client = await createClientForUser(user);
 
@@ -1522,7 +1541,7 @@ export async function stremioRoutes(app: FastifyInstance) {
       const rating = isRemove ? null : parseFloat(ratingStr);
 
       logger.info({ userId, filmId, rating, isRemove, imdbId }, 'Rating submit request');
-      trackEvent('action_rate', userId, { filmId, rating, isRemove });
+      trackEvent('action_rate', userId, { filmId, rating, isRemove, ...(imdbId && { imdbId }) });
 
       try {
         const client = await createClientForUser(user);
