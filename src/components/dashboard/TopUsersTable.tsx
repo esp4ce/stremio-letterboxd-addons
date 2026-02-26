@@ -3,6 +3,7 @@ interface TopUsersTableProps {
     userId: string;
     username: string | null;
     displayName: string | null;
+    tier: number;
     totalEvents: number;
     lastActivity: string;
     firstSeen: string;
@@ -34,13 +35,14 @@ function formatDate(dateStr: string): string {
 export function TopUsersTable({ users }: TopUsersTableProps) {
   return (
     <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-      <h2 className="mb-4 text-lg font-semibold">Top Users (30d)</h2>
+      <h2 className="mb-4 text-lg font-semibold">Top Users</h2>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-800 text-left text-zinc-400">
               <th className="pb-3 font-medium">User</th>
+              <th className="pb-3 font-medium">Tier</th>
               <th className="pb-3 font-medium">Events</th>
               <th className="hidden pb-3 font-medium sm:table-cell">Catalogs</th>
               <th className="hidden pb-3 font-medium sm:table-cell">Actions</th>
@@ -59,6 +61,15 @@ export function TopUsersTable({ users }: TopUsersTableProps) {
                       <div className="text-xs text-zinc-500">@{user.username}</div>
                     )}
                   </div>
+                </td>
+                <td className="py-3">
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                    user.tier === 2
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : 'bg-zinc-700/50 text-zinc-400'
+                  }`}>
+                    Tier {user.tier}
+                  </span>
                 </td>
                 <td className="py-3">
                   <span className="font-mono">{user.totalEvents}</span>

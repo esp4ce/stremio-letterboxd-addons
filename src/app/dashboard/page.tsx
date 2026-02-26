@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { getToken, clearToken, fetchWithAuth, isTokenExpired } from '@/lib/dashboard-auth';
 import { OverviewStats } from '@/components/dashboard/OverviewStats';
@@ -51,6 +51,7 @@ interface TopUsersData {
     userId: string;
     username: string | null;
     displayName: string | null;
+    tier: number;
     totalEvents: number;
     lastActivity: string;
     firstSeen: string;
@@ -88,8 +89,6 @@ interface MetricsSummaryData {
 interface AudienceData {
   uniqueUsers: { tier1: number; tier2: number; total: number };
   peakHours: Array<{ hour: number; count: number }>;
-  survival: { avgDays: number; medianDays: number };
-  funnel: { manifestViews: number; catalogFetches: number; authenticated: number };
   topFilms: Array<{ imdbId: string; title?: string; count: number }>;
   topLists: Array<{ listId: string; listName?: string; count: number }>;
   actions: Array<{ action: string; count: number }>;
@@ -98,6 +97,13 @@ interface AudienceData {
 }
 
 type DashboardTab = 'overview' | 'insights' | 'audience';
+
+const TIME_RANGES = [
+  { label: '24h', days: 1 },
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+] as const;
 
 export default function Dashboard() {
   const router = useRouter();
@@ -108,35 +114,17 @@ export default function Dashboard() {
   const [metricsData, setMetricsData] = useState<MetricsSummaryData | null>(null);
   const [audienceData, setAudienceData] = useState<AudienceData | null>(null);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
+  const [daysRange, setDaysRange] = useState<number>(30);
 
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-  useEffect(() => {
-    // Check authentication
-    const token = getToken();
-    if (!token || isTokenExpired(token)) {
-      router.push('/dashboard/login');
-      return;
-    }
-
-    // Fetch initial data
-    fetchDashboardData();
-
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(() => {
-      fetchDashboardData();
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, [router, backendUrl]);
-
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       const [healthRes, usersRes, metricsRes, anonRes] = await Promise.all([
         fetchWithAuth(`${backendUrl}/health/detailed`),
-        fetchWithAuth(`${backendUrl}/metrics/users?days=30&limit=10`),
-        fetchWithAuth(`${backendUrl}/metrics/summary?days=30`),
-        fetchWithAuth(`${backendUrl}/metrics/anonymous?days=30`),
+        fetchWithAuth(`${backendUrl}/metrics/users?days=${daysRange}&limit=10`),
+        fetchWithAuth(`${backendUrl}/metrics/summary?days=${daysRange}`),
+        fetchWithAuth(`${backendUrl}/metrics/anonymous?days=${daysRange}`),
       ]);
 
       if (!healthRes.ok || !usersRes.ok || !metricsRes.ok) {
@@ -163,7 +151,23 @@ export default function Dashboard() {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard');
       setLoading(false);
     }
-  };
+  }, [backendUrl, daysRange, router]);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token || isTokenExpired(token)) {
+      router.push('/dashboard/login');
+      return;
+    }
+
+    fetchDashboardData();
+
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [router, fetchDashboardData]);
 
   const handleLogout = () => {
     clearToken();
@@ -209,12 +213,30 @@ export default function Dashboard() {
               Auto-refresh every 10 seconds
             </p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="rounded-lg bg-zinc-900/50 px-4 py-2 text-sm text-zinc-300 ring-1 ring-zinc-800 transition hover:bg-zinc-800/50"
-          >
-            Log Out
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Time range filter */}
+            <div className="flex gap-1 rounded-lg bg-zinc-900/50 p-1 ring-1 ring-zinc-800">
+              {TIME_RANGES.map((range) => (
+                <button
+                  key={range.days}
+                  onClick={() => setDaysRange(range.days)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                    daysRange === range.days
+                      ? 'bg-white text-black'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  {range.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={handleLogout}
+              className="rounded-lg bg-zinc-900/50 px-4 py-2 text-sm text-zinc-300 ring-1 ring-zinc-800 transition hover:bg-zinc-800/50"
+            >
+              Log Out
+            </button>
+          </div>
         </div>
 
         {/* Alerts */}
@@ -257,10 +279,8 @@ export default function Dashboard() {
 
         {activeTab === 'overview' && (
           <>
-            {/* Overview Stats */}
-            {usersData && <OverviewStats data={usersData.overview} audienceData={audienceData} />}
+            {usersData && <OverviewStats data={usersData.overview} uniqueUsers={audienceData?.uniqueUsers} />}
 
-            {/* System Health + Database (2 columns) */}
             <div className="grid gap-6 md:grid-cols-2">
               {healthData && <SystemHealth data={healthData.system} />}
               {healthData && metricsData?.growth && (
@@ -272,10 +292,8 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Top Users */}
             {usersData && <TopUsersTable users={usersData.topUsers} />}
 
-            {/* Catalogs Chart + Recent Activity (2 columns) */}
             <div className="grid gap-6 md:grid-cols-2">
               {metricsData && <CatalogsChart catalogs={metricsData.top_catalogs} />}
               {metricsData && <RecentActivity dailyEvents={metricsData.daily_events.slice(0, 7)} />}
@@ -355,7 +373,6 @@ export default function Dashboard() {
 
             {/* Actions + Catalog Breakdown */}
             <div className="grid gap-6 md:grid-cols-2">
-              {/* User Actions */}
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Actions utilisateur</h2>
                 {audienceData.actions.length === 0 ? (
@@ -381,7 +398,6 @@ export default function Dashboard() {
                 )}
               </div>
 
-              {/* Catalog Breakdown by tier */}
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Catalogs par tier</h2>
                 {audienceData.catalogBreakdown.length === 0 ? (
@@ -442,8 +458,8 @@ export default function Dashboard() {
 
         {activeTab === 'audience' && audienceData && (
           <>
-            {/* Unique Users Breakdown */}
-            <div className="grid gap-4 sm:grid-cols-3">
+            {/* Tier cards */}
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
                 <p className="text-sm text-zinc-400">Tier 2 (authenticated)</p>
                 <p className="mt-1 text-2xl font-semibold text-white">{audienceData.uniqueUsers.tier2}</p>
@@ -452,62 +468,10 @@ export default function Dashboard() {
                 <p className="text-sm text-zinc-400">Tier 1 (public config)</p>
                 <p className="mt-1 text-2xl font-semibold text-white">{audienceData.uniqueUsers.tier1}</p>
               </div>
-              <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
-                <p className="text-sm text-zinc-400">Total Unique</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.uniqueUsers.total}</p>
-              </div>
             </div>
 
-            {/* Peak Hours + Funnel (2 columns) */}
-            <div className="grid gap-6 md:grid-cols-2">
-              <PeakHoursChart data={audienceData.peakHours} />
-
-              <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-                <h2 className="mb-4 text-lg font-semibold">Funnel d&apos;usage</h2>
-                <div className="space-y-3">
-                  {[
-                    { label: 'Manifest Views', value: audienceData.funnel.manifestViews },
-                    { label: 'Catalog Fetches', value: audienceData.funnel.catalogFetches },
-                    { label: 'Authenticated', value: audienceData.funnel.authenticated },
-                  ].map((step) => {
-                    const maxVal = Math.max(
-                      audienceData.funnel.manifestViews,
-                      audienceData.funnel.catalogFetches,
-                      audienceData.funnel.authenticated,
-                      1
-                    );
-                    const barPct = Math.min(Math.round((step.value / maxVal) * 100), 100);
-                    return (
-                      <div key={step.label}>
-                        <div className="mb-1 flex justify-between text-sm">
-                          <span className="text-zinc-400">{step.label}</span>
-                          <span className="text-white">{step.value}</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-zinc-800">
-                          <div
-                            className="h-2 rounded-full bg-white transition-all"
-                            style={{ width: `${barPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Survival */}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
-                <p className="text-sm text-zinc-400">Durée moy. d&apos;utilisation</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.survival.avgDays} jours</p>
-                <p className="mt-0.5 text-xs text-zinc-500">Entre 1er et dernier event (auth uniquement)</p>
-              </div>
-              <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
-                <p className="text-sm text-zinc-400">Durée médiane d&apos;utilisation</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.survival.medianDays} jours</p>
-              </div>
-            </div>
+            {/* Peak Hours */}
+            <PeakHoursChart data={audienceData.peakHours} />
           </>
         )}
       </div>

@@ -144,6 +144,7 @@ export interface UserMetrics {
   userId: string;
   username: string | null;
   displayName: string | null;
+  tier: number;
   totalEvents: number;
   lastActivity: string;
   firstSeen: string;
@@ -187,6 +188,7 @@ export function getTopUsers(days: number = 30, limit: number = 50): TopUsersMetr
       e.user_id,
       u.letterboxd_username,
       u.letterboxd_display_name,
+      u.tier,
       COUNT(*) as total_events,
       MAX(e.created_at) as last_activity,
       MIN(e.created_at) as first_seen
@@ -200,6 +202,7 @@ export function getTopUsers(days: number = 30, limit: number = 50): TopUsersMetr
     user_id: string;
     letterboxd_username: string | null;
     letterboxd_display_name: string | null;
+    tier: number;
     total_events: number;
     last_activity: string;
     first_seen: string;
@@ -222,6 +225,7 @@ export function getTopUsers(days: number = 30, limit: number = 50): TopUsersMetr
       userId: user.user_id,
       username: user.letterboxd_username,
       displayName: user.letterboxd_display_name,
+      tier: user.tier ?? 1,
       totalEvents: user.total_events,
       lastActivity: user.last_activity,
       firstSeen: user.first_seen,
@@ -278,52 +282,6 @@ export function getPeakHours(days: number = 30): PeakHourEntry[] {
   // Fill missing hours with 0
   const hourMap = new Map(rows.map((r) => [r.hour, r.count]));
   return Array.from({ length: 24 }, (_, i) => ({ hour: i, count: hourMap.get(i) ?? 0 }));
-}
-
-export interface AddonSurvival {
-  avgDays: number;
-  medianDays: number;
-}
-
-export function getAddonSurvival(days: number = 90): AddonSurvival {
-  const db = getDb();
-  const since = sinceDate(days);
-
-  const rows = db.prepare(
-    `SELECT ROUND(julianday(MAX(created_at)) - julianday(MIN(created_at)), 1) as span_days
-     FROM events
-     WHERE user_id IS NOT NULL AND created_at >= ?
-     GROUP BY user_id
-     HAVING COUNT(*) >= 2`
-  ).all(since) as Array<{ span_days: number }>;
-
-  if (rows.length === 0) return { avgDays: 0, medianDays: 0 };
-
-  const spans = rows.map((r) => r.span_days).sort((a, b) => a - b);
-  const avg = spans.reduce((s, v) => s + v, 0) / spans.length;
-  const mid = Math.floor(spans.length / 2);
-  const median = spans.length % 2 === 0
-    ? (spans[mid - 1]! + spans[mid]!) / 2
-    : spans[mid]!;
-
-  return { avgDays: parseFloat(avg.toFixed(1)), medianDays: parseFloat(median.toFixed(1)) };
-}
-
-export interface InstallFunnel {
-  manifestViews: number;
-  catalogFetches: number;
-  authenticated: number;
-}
-
-export function getInstallFunnel(days: number = 30): InstallFunnel {
-  const db = getDb();
-  const since = sinceDate(days);
-
-  return {
-    manifestViews: countQuery(db, "SELECT COUNT(*) as count FROM events WHERE event = 'manifest_view' AND created_at >= ?", since),
-    catalogFetches: countQuery(db, "SELECT COUNT(*) as count FROM events WHERE event LIKE 'catalog_%' AND created_at >= ?", since),
-    authenticated: countQuery(db, "SELECT COUNT(*) as count FROM events WHERE event = 'login' AND created_at >= ?", since),
-  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

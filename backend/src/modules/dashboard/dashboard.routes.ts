@@ -5,7 +5,7 @@ import { config } from '../../config/index.js';
 import { verifyDashboardAuth } from './dashboard.middleware.js';
 import { getSystemMetrics, getDatabaseMetrics, generateAlerts } from '../../lib/system-metrics.js';
 import {
-  getTopUsers, getMetricsSummary, getTotalUniqueUsers, getPeakHours, getAddonSurvival, getInstallFunnel,
+  getTopUsers, getMetricsSummary, getTotalUniqueUsers, getPeakHours,
   getTopStreamedFilms, getTopAccessedLists, getActionBreakdown, getTopActionedFilms, getCatalogBreakdown,
 } from '../../lib/metrics.js';
 import { getCacheStats, getCacheMetrics, cinemetaCache, listNameCache } from '../../lib/cache.js';
@@ -183,8 +183,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
       return {
         uniqueUsers: getTotalUniqueUsers(clampedDays),
         peakHours: getPeakHours(clampedDays),
-        survival: getAddonSurvival(clampedDays),
-        funnel: getInstallFunnel(clampedDays),
         topFilms: topFilms.map(enrichFilm),
         topLists,
         actions: getActionBreakdown(clampedDays),
