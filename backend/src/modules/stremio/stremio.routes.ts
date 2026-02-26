@@ -51,7 +51,7 @@ import {
   cacheMetrics,
 } from '../../lib/cache.js';
 import { trackEvent, type EventType } from '../../lib/metrics.js';
-import { generateAnonId } from '../../lib/anonymous-id.js';
+import { generateAnonId, usernameToAnonId } from '../../lib/anonymous-id.js';
 import { callWithAppToken } from '../../lib/app-client.js';
 import { decodeConfig, type PublicConfig } from '../../lib/config-encoding.js';
 import { serverConfig } from '../../config/index.js';
@@ -873,7 +873,7 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
-      trackEvent('manifest_view', undefined, { tier: 1 }, generateAnonId(request));
+      trackEvent('manifest_view', undefined, { tier: 1 }, cfg.u ? usernameToAnonId(cfg.u) : generateAnonId(request));
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
@@ -920,7 +920,7 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
-      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, generateAnonId(request));
+      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, cfg.u ? usernameToAnonId(cfg.u) : generateAnonId(request));
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
@@ -945,7 +945,7 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
-      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, generateAnonId(request));
+      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, cfg.u ? usernameToAnonId(cfg.u) : generateAnonId(request));
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
