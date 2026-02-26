@@ -1,4 +1,7 @@
+import { formatRange } from '@/lib/format';
+
 interface TopUsersTableProps {
+  daysRange: number;
   users: Array<{
     userId: string;
     username: string | null;
@@ -32,10 +35,10 @@ function formatDate(dateStr: string): string {
   return date.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
 }
 
-export function TopUsersTable({ users }: TopUsersTableProps) {
+export function TopUsersTable({ users, daysRange }: TopUsersTableProps) {
   return (
     <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-      <h2 className="mb-4 text-lg font-semibold">Top Users</h2>
+      <h2 className="mb-4 text-lg font-semibold">Top Users ({formatRange(daysRange)})</h2>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

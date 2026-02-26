@@ -10,6 +10,42 @@ function countQuery(db: Database.Database, sql: string, ...params: unknown[]): n
   return (db.prepare(sql).get(...params) as { count: number }).count;
 }
 
+/** Fill missing hours/days with 0 so charts have continuous data */
+function fillTimeGaps(
+  data: Array<{ date: string; count: number }>,
+  sinceISO: string,
+  granularity: 'hour' | 'day',
+): Array<{ date: string; count: number }> {
+  if (data.length === 0) return data;
+
+  const existing = new Map(data.map((d) => [d.date, d.count]));
+  const result: Array<{ date: string; count: number }> = [];
+  const now = new Date();
+  const start = new Date(sinceISO);
+
+  if (granularity === 'hour') {
+    // Round start down to the hour
+    start.setMinutes(0, 0, 0);
+    const cursor = new Date(start);
+    while (cursor <= now) {
+      const key = cursor.toISOString().slice(0, 13) + ':00'; // YYYY-MM-DDTHH:00
+      result.push({ date: key, count: existing.get(key) ?? 0 });
+      cursor.setHours(cursor.getHours() + 1);
+    }
+  } else {
+    // Round start to date
+    const cursor = new Date(start.toISOString().slice(0, 10));
+    const todayStr = now.toISOString().slice(0, 10);
+    while (cursor.toISOString().slice(0, 10) <= todayStr) {
+      const key = cursor.toISOString().slice(0, 10); // YYYY-MM-DD
+      result.push({ date: key, count: existing.get(key) ?? 0 });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+
+  return result;
+}
+
 export type EventType =
   | 'install'
   | 'catalog_watchlist'
@@ -43,14 +79,13 @@ export interface MetricsSummary {
   total_events: number;
   total_users: number;
   events_by_type: Record<string, number>;
-  daily_events: Array<{ date: string; count: number }>;
+  time_events: Array<{ date: string; count: number }>;
+  granularity: 'hour' | 'day';
   daily_active_users: Array<{ date: string; count: number }>;
   top_catalogs: Array<{ catalog: string; count: number }>;
   growth?: {
-    eventsLast7Days: number;
-    eventsLast30Days: number;
-    newUsersLast7Days: number;
     avgEventsPerDay: number;
+    newUsersInPeriod: number;
     projectedDbSizeIn30Days: string;
   };
   database?: {
@@ -72,11 +107,24 @@ export function getMetricsSummary(days: number = 30, includeEnriched: boolean = 
     'SELECT event, COUNT(*) as count FROM events WHERE created_at >= ? GROUP BY event ORDER BY count DESC'
   ).all(since) as Array<{ event: string; count: number }>;
 
-  const dailyEvents = db.prepare(
-    `SELECT date(created_at) as date, COUNT(*) as count
-     FROM events WHERE created_at >= ?
-     GROUP BY date(created_at) ORDER BY date DESC`
-  ).all(since) as Array<{ date: string; count: number }>;
+  // Hourly granularity for short periods, daily otherwise
+  const useHourly = days > 0 && days <= 1;
+  const granularity: 'hour' | 'day' = useHourly ? 'hour' : 'day';
+
+  const rawTimeEvents = useHourly
+    ? db.prepare(
+        `SELECT strftime('%Y-%m-%dT%H:00', created_at) as date, COUNT(*) as count
+         FROM events WHERE created_at >= ?
+         GROUP BY strftime('%Y-%m-%dT%H:00', created_at) ORDER BY date ASC`
+      ).all(since) as Array<{ date: string; count: number }>
+    : db.prepare(
+        `SELECT date(created_at) as date, COUNT(*) as count
+         FROM events WHERE created_at >= ?
+         GROUP BY date(created_at) ORDER BY date ASC`
+      ).all(since) as Array<{ date: string; count: number }>;
+
+  // Fill gaps so charts show 0 for missing periods
+  const timeEvents = fillTimeGaps(rawTimeEvents, since, granularity);
 
   const dailyActiveUsers = db.prepare(
     `SELECT date(created_at) as date, COUNT(DISTINCT user_id) as count
@@ -99,19 +147,18 @@ export function getMetricsSummary(days: number = 30, includeEnriched: boolean = 
     total_events: totalEventsCount,
     total_users: totalUsersCount,
     events_by_type: byTypeMap,
-    daily_events: dailyEvents,
+    time_events: timeEvents,
+    granularity,
     daily_active_users: dailyActiveUsers,
     top_catalogs: topCatalogs,
   };
 
   if (includeEnriched) {
-    const since7d = sinceDate(7);
-    const eventsLast7Days = countQuery(db, 'SELECT COUNT(*) as count FROM events WHERE created_at >= ?', since7d);
-    const newUsersLast7Days = countQuery(db, 'SELECT COUNT(*) as count FROM users WHERE created_at >= ?', since7d);
-
-    const avgEventsPerDay = dailyEvents.length > 0
-      ? dailyEvents.reduce((sum, d) => sum + d.count, 0) / dailyEvents.length
+    const avgEventsPerDay = timeEvents.length > 0
+      ? timeEvents.reduce((sum, d) => sum + d.count, 0) / (useHourly ? 1 : timeEvents.length)
       : 0;
+
+    const newUsersInPeriod = countQuery(db, 'SELECT COUNT(*) as count FROM users WHERE created_at >= ?', since);
 
     const pageCount = db.pragma('page_count', { simple: true }) as number;
     const pageSize = db.pragma('page_size', { simple: true }) as number;
@@ -123,10 +170,8 @@ export function getMetricsSummary(days: number = 30, includeEnriched: boolean = 
     )?.created_at ?? null;
 
     summary.growth = {
-      eventsLast7Days,
-      eventsLast30Days: totalEventsCount,
-      newUsersLast7Days,
       avgEventsPerDay: parseFloat(avgEventsPerDay.toFixed(2)),
+      newUsersInPeriod,
       projectedDbSizeIn30Days: ((sizeBytes + avgEventsPerDay * 30 * 500) / 1024 / 1024).toFixed(2),
     };
 

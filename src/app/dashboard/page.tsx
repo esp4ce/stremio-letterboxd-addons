@@ -66,14 +66,13 @@ interface MetricsSummaryData {
   total_events: number;
   total_users: number;
   events_by_type: Record<string, number>;
-  daily_events: Array<{ date: string; count: number }>;
+  time_events: Array<{ date: string; count: number }>;
+  granularity: 'hour' | 'day';
   daily_active_users: Array<{ date: string; count: number }>;
   top_catalogs: Array<{ catalog: string; count: number }>;
   growth?: {
-    eventsLast7Days: number;
-    eventsLast30Days: number;
-    newUsersLast7Days: number;
     avgEventsPerDay: number;
+    newUsersInPeriod: number;
     projectedDbSizeIn30Days: string;
   };
   database?: {
@@ -286,16 +285,18 @@ export default function Dashboard() {
                 <DatabaseStats
                   database={healthData.database}
                   growth={metricsData.growth}
-                  dailyEvents={metricsData.daily_events}
+                  timeEvents={metricsData.time_events}
+                  granularity={metricsData.granularity}
+                  daysRange={daysRange}
                 />
               )}
             </div>
 
-            {usersData && <TopUsersTable users={usersData.topUsers} />}
+            {usersData && <TopUsersTable users={usersData.topUsers} daysRange={daysRange} />}
 
             <div className="grid gap-6 md:grid-cols-2">
-              {metricsData && <CatalogsChart catalogs={metricsData.top_catalogs} />}
-              {metricsData && <RecentActivity dailyEvents={metricsData.daily_events.slice(0, 7)} />}
+              {metricsData && <CatalogsChart catalogs={metricsData.top_catalogs} daysRange={daysRange} />}
+              {metricsData && <RecentActivity timeEvents={metricsData.time_events} granularity={metricsData.granularity} daysRange={daysRange} />}
             </div>
           </>
         )}
@@ -307,7 +308,7 @@ export default function Dashboard() {
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Top Films (streams)</h2>
                 {audienceData.topFilms.length === 0 ? (
-                  <p className="text-sm text-zinc-500">Aucune donnée</p>
+                  <p className="text-sm text-zinc-500">No data</p>
                 ) : (
                   <div className="space-y-2">
                     {audienceData.topFilms.map((film, i) => {
@@ -341,9 +342,9 @@ export default function Dashboard() {
 
               {/* Top Lists */}
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-                <h2 className="mb-4 text-lg font-semibold">Top Listes (catalog views)</h2>
+                <h2 className="mb-4 text-lg font-semibold">Top Lists (catalog views)</h2>
                 {audienceData.topLists.length === 0 ? (
-                  <p className="text-sm text-zinc-500">Aucune donnée</p>
+                  <p className="text-sm text-zinc-500">No data</p>
                 ) : (
                   <div className="space-y-2">
                     {audienceData.topLists.map((list, i) => {
@@ -373,9 +374,9 @@ export default function Dashboard() {
             {/* Actions + Catalog Breakdown */}
             <div className="grid gap-6 md:grid-cols-2">
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-                <h2 className="mb-4 text-lg font-semibold">Actions utilisateur</h2>
+                <h2 className="mb-4 text-lg font-semibold">User Actions</h2>
                 {audienceData.actions.length === 0 ? (
-                  <p className="text-sm text-zinc-500">Aucune donnée</p>
+                  <p className="text-sm text-zinc-500">No data</p>
                 ) : (
                   <div className="space-y-3">
                     {audienceData.actions.map((a) => {
@@ -398,9 +399,9 @@ export default function Dashboard() {
               </div>
 
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-                <h2 className="mb-4 text-lg font-semibold">Catalogs par tier</h2>
+                <h2 className="mb-4 text-lg font-semibold">Catalogs by Tier</h2>
                 {audienceData.catalogBreakdown.length === 0 ? (
-                  <p className="text-sm text-zinc-500">Aucune donnée</p>
+                  <p className="text-sm text-zinc-500">No data</p>
                 ) : (
                   <div className="space-y-2">
                     {audienceData.catalogBreakdown.map((c) => {
@@ -431,7 +432,7 @@ export default function Dashboard() {
             {/* Top Actioned Films */}
             {audienceData.topActionedFilms.length > 0 && (
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-                <h2 className="mb-4 text-lg font-semibold">Top films (actions)</h2>
+                <h2 className="mb-4 text-lg font-semibold">Top Films (actions)</h2>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {audienceData.topActionedFilms.map((f, i) => (
                     <div key={`${f.filmId}-${f.action}-${i}`} className="flex items-center justify-between rounded-lg bg-zinc-800/50 px-3 py-2">

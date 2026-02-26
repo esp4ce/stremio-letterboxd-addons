@@ -1,8 +1,16 @@
+import { formatRange } from '@/lib/format';
+
 interface RecentActivityProps {
-  dailyEvents: Array<{ date: string; count: number }>;
+  timeEvents: Array<{ date: string; count: number }>;
+  granularity: 'hour' | 'day';
+  daysRange: number;
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string, granularity: 'hour' | 'day'): string {
+  if (granularity === 'hour') {
+    return dateStr.slice(11, 16); // "HH:mm"
+  }
+
   const date = new Date(dateStr);
   const today = new Date();
   const yesterday = new Date(today);
@@ -18,26 +26,26 @@ function formatDate(dateStr: string): string {
   return date.toLocaleDateString('en-US', { day: '2-digit', month: 'short', weekday: 'short' });
 }
 
-export function RecentActivity({ dailyEvents }: RecentActivityProps) {
+export function RecentActivity({ timeEvents, granularity, daysRange }: RecentActivityProps) {
   return (
     <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-      <h2 className="mb-4 text-lg font-semibold">Recent Activity</h2>
+      <h2 className="mb-4 text-lg font-semibold">Activity ({formatRange(daysRange)})</h2>
 
       <div className="space-y-3">
-        {dailyEvents.map((day) => (
-          <div key={day.date} className="flex items-center justify-between">
+        {timeEvents.map((entry) => (
+          <div key={entry.date} className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="h-2 w-2 rounded-full bg-white" />
-              <span className="text-sm text-zinc-300">{formatDate(day.date)}</span>
+              <span className="text-sm text-zinc-300">{formatDate(entry.date, granularity)}</span>
             </div>
             <span className="font-mono text-sm text-white">
-              {day.count.toLocaleString()} events
+              {entry.count.toLocaleString()} events
             </span>
           </div>
         ))}
       </div>
 
-      {dailyEvents.length === 0 && (
+      {timeEvents.length === 0 && (
         <div className="py-8 text-center text-sm text-zinc-500">No recent activity</div>
       )}
     </div>

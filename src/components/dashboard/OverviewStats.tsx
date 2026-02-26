@@ -1,3 +1,5 @@
+import { formatRange } from '@/lib/format';
+
 interface OverviewStatsProps {
   data: {
     totalUsers: number;
@@ -8,12 +10,6 @@ interface OverviewStatsProps {
   };
   uniqueUsers?: { tier1: number; tier2: number; total: number } | null;
   daysRange: number;
-}
-
-function formatRange(days: number): string {
-  if (days === 0) return 'all time';
-  if (days === 1) return '24h';
-  return `${days}d`;
 }
 
 export function OverviewStats({ data, uniqueUsers, daysRange }: OverviewStatsProps) {

@@ -2,8 +2,11 @@
 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
+import { formatRange } from '@/lib/format';
+
 interface CatalogsChartProps {
   catalogs: Array<{ catalog: string; count: number }>;
+  daysRange: number;
 }
 
 function formatCatalogName(catalog: string): string {
@@ -18,7 +21,7 @@ function formatCatalogName(catalog: string): string {
   return names[catalog] || catalog.replace('catalog_', '');
 }
 
-export function CatalogsChart({ catalogs }: CatalogsChartProps) {
+export function CatalogsChart({ catalogs, daysRange }: CatalogsChartProps) {
   const chartData = catalogs.map((c) => ({
     name: formatCatalogName(c.catalog),
     views: c.count,
@@ -26,7 +29,7 @@ export function CatalogsChart({ catalogs }: CatalogsChartProps) {
 
   return (
     <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
-      <h2 className="mb-4 text-lg font-semibold">Popular Catalogs</h2>
+      <h2 className="mb-4 text-lg font-semibold">Popular Catalogs ({formatRange(daysRange)})</h2>
 
       <ResponsiveContainer width="100%" height={250}>
         <BarChart data={chartData}>
