@@ -21,6 +21,7 @@ interface UserPreferences {
   showActions?: boolean;
   showRatings?: boolean;
   catalogNames?: Record<string, string>;
+  catalogOrder?: string[];
 }
 
 interface LoginResponse {
@@ -59,6 +60,7 @@ interface PublicConfig {
   r: boolean;
   n?: Record<string, string>;
   w?: string[];
+  o?: string[];
 }
 
 interface ToastItem {
@@ -117,6 +119,7 @@ export default function Configure() {
   const [publicExternalWatchlists, setPublicExternalWatchlists] = useState<Array<{ username: string; displayName: string }>>([]);
   const [showRatings, setShowRatings] = useState(true);
   const [publicCatalogNames, setPublicCatalogNames] = useState<Record<string, string>>({});
+  const [publicCatalogOrder, setPublicCatalogOrder] = useState<string[]>([]);
   const [generatedManifestUrl, setGeneratedManifestUrl] = useState<string | null>(null);
 
   // Shared
@@ -487,6 +490,10 @@ export default function Configure() {
       cfg.n = publicCatalogNames;
     }
 
+    if (publicCatalogOrder.length > 0) {
+      cfg.o = publicCatalogOrder;
+    }
+
     if (usernameValidated) {
       cfg.u = usernameValidated.username;
       cfg.c.watchlist = publicWatchlist;
@@ -533,6 +540,7 @@ export default function Configure() {
     setPublicOwnLists([]);
     setPublicLikedFilms(false);
     setPublicCatalogNames({});
+    setPublicCatalogOrder([]);
     setPasswordPreview("");
     if (passwordRef.current) passwordRef.current.value = "";
   };
@@ -585,6 +593,8 @@ export default function Configure() {
           onShowRatingsChange={setShowRatings}
           publicCatalogNames={publicCatalogNames}
           onPublicCatalogNamesChange={setPublicCatalogNames}
+          publicCatalogOrder={publicCatalogOrder}
+          onPublicCatalogOrderChange={setPublicCatalogOrder}
           externalListUrl={externalListUrl}
           onExternalListUrlChange={setExternalListUrl}
           onAddExternalList={handleResolvePublicList}

@@ -14,6 +14,7 @@ export interface UserPreferences {
   showActions?: boolean;
   showRatings?: boolean;
   catalogNames?: Record<string, string>;
+  catalogOrder?: string[];
 }
 
 export interface User {

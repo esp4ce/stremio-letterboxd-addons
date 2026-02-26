@@ -195,7 +195,7 @@ export function generatePublicManifest(
   listNames?: Map<string, string>,
   watchlistNames?: Map<string, string>
 ): StremioManifest {
-  const catalogs: StremioCatalog[] = [];
+  let catalogs: StremioCatalog[] = [];
 
   if (cfg.c.popular) {
     catalogs.push({
@@ -263,6 +263,17 @@ export function generatePublicManifest(
       const customName = cfg.n[cat.id];
       if (customName) cat.name = customName;
     }
+  }
+
+  // Apply catalog ordering from config
+  if (cfg.o?.length) {
+    const remaining = new Map(catalogs.map((c) => [c.id, c]));
+    const ordered: StremioCatalog[] = [];
+    for (const id of cfg.o) {
+      const cat = remaining.get(id);
+      if (cat) { ordered.push(cat); remaining.delete(id); }
+    }
+    catalogs = [...ordered, ...remaining.values()];
   }
 
   const namePart = displayName ? ` for ${displayName}` : '';
@@ -370,6 +381,19 @@ export function generateDynamicManifest(
       }));
 
     catalogs = [...filteredBase, ...ownListCatalogs, ...externalListCatalogs, ...externalWatchlistCatalogs];
+
+    // Apply catalog ordering
+    if (preferences.catalogOrder?.length) {
+      const knownIds = new Set(catalogs.map((c) => c.id));
+      const validOrder = preferences.catalogOrder.filter((id) => knownIds.has(id));
+      const remaining = new Map(catalogs.map((c) => [c.id, c]));
+      const ordered: StremioCatalog[] = [];
+      for (const id of validOrder) {
+        const cat = remaining.get(id);
+        if (cat) { ordered.push(cat); remaining.delete(id); }
+      }
+      catalogs = [...ordered, ...remaining.values()];
+    }
 
     // Apply custom catalog names
     if (preferences.catalogNames) {

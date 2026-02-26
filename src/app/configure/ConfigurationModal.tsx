@@ -1,6 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  arrayMove,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface UserPreferences {
   catalogs: { watchlist: boolean; diary: boolean; friends: boolean; popular: boolean; top250: boolean; likedFilms: boolean };
@@ -15,6 +32,7 @@ interface UserPreferences {
   showActions?: boolean;
   showRatings?: boolean;
   catalogNames?: Record<string, string>;
+  catalogOrder?: string[];
 }
 
 interface BaseProps {
@@ -53,11 +71,76 @@ interface PublicModeProps extends BaseProps {
   onShowRatingsChange: (val: boolean) => void;
   publicCatalogNames: Record<string, string>;
   onPublicCatalogNamesChange: (names: Record<string, string>) => void;
+  publicCatalogOrder: string[];
+  onPublicCatalogOrderChange: (order: string[]) => void;
 }
 
 type ConfigurationModalProps = FullModeProps | PublicModeProps;
 
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+type ActiveCatalogItem =
+  | { id: string; type: "base"; key: string; label: string; description: string }
+  | { id: string; type: "ownList"; listId: string; label: string; filmCount: number }
+  | { id: string; type: "externalList"; list: { id: string; name: string; owner: string; filmCount: number } }
+  | { id: string; type: "externalWatchlist"; watchlist: { username: string; displayName: string } };
+
+interface BaseCatalogDef {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+}
+
+const ALL_BASE_DEFS: BaseCatalogDef[] = [
+  { id: "letterboxd-watchlist", key: "watchlist", label: "Watchlist", description: "Films you want to watch" },
+  { id: "letterboxd-diary", key: "diary", label: "Diary", description: "Your recently watched films" },
+  { id: "letterboxd-friends", key: "friends", label: "Friends Activity", description: "What your friends are watching" },
+  { id: "letterboxd-liked-films", key: "likedFilms", label: "Liked Films", description: "Films you have liked" },
+  { id: "letterboxd-popular", key: "popular", label: "Popular This Week", description: "Trending films on Letterboxd" },
+  { id: "letterboxd-top250", key: "top250", label: "Top 250 Narrative Features", description: "Official Top 250 by Dave" },
+];
+
 const PENCIL_ICON = "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z";
+const TRASH_PATH = "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16";
+
+// ─── Sub-components ────────────────────────────────────────────────────────
+
+function GripIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="9" cy="5" r="1.5" />
+      <circle cx="15" cy="5" r="1.5" />
+      <circle cx="9" cy="12" r="1.5" />
+      <circle cx="15" cy="12" r="1.5" />
+      <circle cx="9" cy="19" r="1.5" />
+      <circle cx="15" cy="19" r="1.5" />
+    </svg>
+  );
+}
+
+function SortableCatalogRow({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors ${isDragging ? "opacity-50 bg-zinc-800/60 shadow-lg" : "bg-zinc-800/35 hover:bg-zinc-800/50"}`}
+    >
+      <button
+        type="button"
+        {...listeners}
+        {...attributes}
+        tabIndex={-1}
+        className="flex-shrink-0 cursor-grab text-zinc-600 hover:text-zinc-400 active:cursor-grabbing touch-none"
+        aria-label="Drag to reorder"
+      >
+        <GripIcon />
+      </button>
+      {children}
+    </div>
+  );
+}
 
 function EditableName({
   catalogId,
@@ -120,18 +203,16 @@ function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void 
     <button
       type="button"
       onClick={onToggle}
-      className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${
-        enabled ? "bg-white" : "bg-zinc-700"
-      }`}
+      className={`relative h-6 w-11 flex-shrink-0 rounded-full transition-colors ${enabled ? "bg-white" : "bg-zinc-700"}`}
     >
       <span
-        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full transition-transform ${
-          enabled ? "translate-x-5 bg-black" : "translate-x-0 bg-zinc-400"
-        }`}
+        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full transition-transform ${enabled ? "translate-x-5 bg-black" : "translate-x-0 bg-zinc-400"}`}
       />
     </button>
   );
 }
+
+// ─── Main Component ────────────────────────────────────────────────────────
 
 export default function ConfigurationModal(props: ConfigurationModalProps) {
   const { mode, user, lists, onBack, onSave, isSaving, externalListUrl, onExternalListUrlChange, onAddExternalList, isResolvingList } = props;
@@ -142,6 +223,30 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
   // Catalog name editing state
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  // ── Catalog order helpers ─────────────────────────────────────────────────
+
+  const getCatalogOrder = (): string[] => {
+    if (isPublic) return (props as PublicModeProps).publicCatalogOrder;
+    return (props as FullModeProps).preferences.catalogOrder ?? [];
+  };
+
+  const setCatalogOrder = (order: string[]) => {
+    if (isPublic) {
+      (props as PublicModeProps).onPublicCatalogOrderChange(order);
+    } else {
+      const p = props as FullModeProps;
+      p.onPreferencesChange({ ...p.preferences, catalogOrder: order });
+    }
+  };
+
+  // ── Catalog name helpers ──────────────────────────────────────────────────
 
   const getCatalogDisplayName = (catalogId: string, defaultName: string): string => {
     if (isPublic) {
@@ -179,7 +284,8 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     setEditingCatalogId(null);
   };
 
-  // Catalog toggle helpers
+  // ── Enabled state ─────────────────────────────────────────────────────────
+
   const getCatalogEnabled = (key: string): boolean => {
     if (isPublic) {
       const p = props as PublicModeProps;
@@ -193,97 +299,6 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     return p.preferences.catalogs[key as keyof UserPreferences["catalogs"]] ?? false;
   };
 
-  const toggleCatalog = (key: string) => {
-    if (isPublic) {
-      const p = props as PublicModeProps;
-      if (key === "popular" || key === "top250") {
-        p.onPublicCatalogsChange({ ...p.publicCatalogs, [key]: !p.publicCatalogs[key] });
-      }
-      if (key === "watchlist" && hasUsername) {
-        p.onPublicWatchlistChange(!p.publicWatchlist);
-      }
-      if (key === "likedFilms" && hasUsername) {
-        p.onPublicLikedFilmsChange(!p.publicLikedFilms);
-      }
-      return;
-    }
-    const p = props as FullModeProps;
-    p.onPreferencesChange({
-      ...p.preferences,
-      catalogs: {
-        ...p.preferences.catalogs,
-        [key]: !p.preferences.catalogs[key as keyof UserPreferences["catalogs"]],
-      },
-    });
-  };
-
-  const toggleOwnList = (listId: string) => {
-    if (isPublic) {
-      const p = props as PublicModeProps;
-      const current = p.publicOwnLists;
-      const updated = current.includes(listId)
-        ? current.filter((id) => id !== listId)
-        : [...current, listId];
-      p.onPublicOwnListsChange(updated);
-      return;
-    }
-    const p = props as FullModeProps;
-    const current = p.preferences.ownLists;
-    const updated = current.includes(listId)
-      ? current.filter((id) => id !== listId)
-      : [...current, listId];
-    p.onPreferencesChange({ ...p.preferences, ownLists: updated });
-  };
-
-  const selectAllOwnLists = () => {
-    const allIds = lists.map((l) => l.id);
-    if (isPublic) {
-      (props as PublicModeProps).onPublicOwnListsChange(allIds);
-      return;
-    }
-    const p = props as FullModeProps;
-    p.onPreferencesChange({ ...p.preferences, ownLists: allIds });
-  };
-
-  const deselectAllOwnLists = () => {
-    if (isPublic) {
-      (props as PublicModeProps).onPublicOwnListsChange([]);
-      return;
-    }
-    const p = props as FullModeProps;
-    p.onPreferencesChange({ ...p.preferences, ownLists: [] });
-  };
-
-  const isOwnListSelected = (listId: string): boolean => {
-    if (isPublic) return (props as PublicModeProps).publicOwnLists.includes(listId);
-    return (props as FullModeProps).preferences.ownLists.includes(listId);
-  };
-
-  const removeExternalList = (listId: string) => {
-    if (isPublic) {
-      (props as PublicModeProps).onRemovePublicList(listId);
-      return;
-    }
-    const p = props as FullModeProps;
-    p.onPreferencesChange({
-      ...p.preferences,
-      externalLists: p.preferences.externalLists.filter((l) => l.id !== listId),
-    });
-  };
-
-  const removeExternalWatchlist = (username: string) => {
-    if (isPublic) {
-      (props as PublicModeProps).onRemovePublicExternalWatchlist(username);
-    } else {
-      const p = props as FullModeProps;
-      p.onPreferencesChange({
-        ...p.preferences,
-        externalWatchlists: (p.preferences.externalWatchlists || []).filter((w) => w.username !== username),
-      });
-    }
-  };
-
-  // Build catalog items based on mode
   const catalogKeyToId: Record<string, string> = {
     watchlist: "letterboxd-watchlist",
     diary: "letterboxd-diary",
@@ -293,39 +308,244 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     top250: "letterboxd-top250",
   };
 
-  type CatalogItem = { key: string; catalogId: string; label: string; description: string; available: boolean };
-  const catalogItems: CatalogItem[] = [];
+  // ── Toggle handlers ───────────────────────────────────────────────────────
 
-  if (!isPublic) {
-    catalogItems.push({ key: "watchlist", catalogId: catalogKeyToId["watchlist"]!, label: "Watchlist", description: "Films you want to watch", available: true });
-    catalogItems.push({ key: "diary", catalogId: catalogKeyToId["diary"]!, label: "Diary", description: "Your recently watched films", available: true });
-    catalogItems.push({ key: "friends", catalogId: catalogKeyToId["friends"]!, label: "Friends Activity", description: "What your friends are watching", available: true });
-    catalogItems.push({ key: "likedFilms", catalogId: catalogKeyToId["likedFilms"]!, label: "Liked Films", description: "Films you have liked", available: true });
-  }
+  const toggleCatalog = (key: string) => {
+    const catalogId = catalogKeyToId[key]!;
+    const enabling = !getCatalogEnabled(key);
+    const currentOrder = getCatalogOrder();
+    const newOrder = enabling
+      ? [...currentOrder, catalogId]
+      : currentOrder.filter((id) => id !== catalogId);
 
-  catalogItems.push({ key: "popular", catalogId: catalogKeyToId["popular"]!, label: "Popular This Week", description: "Trending films on Letterboxd", available: true });
-  catalogItems.push({ key: "top250", catalogId: catalogKeyToId["top250"]!, label: "Top 250 Narrative Features", description: "Official Top 250 by Dave", available: true });
+    if (isPublic) {
+      const p = props as PublicModeProps;
+      if (key === "popular" || key === "top250") {
+        p.onPublicCatalogsChange({ ...p.publicCatalogs, [key]: enabling });
+      }
+      if (key === "watchlist" && hasUsername) p.onPublicWatchlistChange(enabling);
+      if (key === "likedFilms" && hasUsername) p.onPublicLikedFilmsChange(enabling);
+      p.onPublicCatalogOrderChange(newOrder);
+      return;
+    }
+    const p = props as FullModeProps;
+    p.onPreferencesChange({
+      ...p.preferences,
+      catalogs: { ...p.preferences.catalogs, [key]: enabling },
+      catalogOrder: newOrder,
+    });
+  };
 
-  if (isPublic && hasUsername) {
-    catalogItems.push({ key: "watchlist", catalogId: catalogKeyToId["watchlist"]!, label: "Watchlist", description: "Films you want to watch", available: true });
-    catalogItems.push({ key: "likedFilms", catalogId: catalogKeyToId["likedFilms"]!, label: "Liked Films", description: "Films you have liked", available: true });
-  }
+  const toggleOwnList = (listId: string) => {
+    const catId = `letterboxd-list-${listId}`;
+    const isSelected = isOwnListSelected(listId);
+    const currentOrder = getCatalogOrder();
+    const newOrder = !isSelected
+      ? [...currentOrder, catId]
+      : currentOrder.filter((id) => id !== catId);
 
-  // External lists to display
+    if (isPublic) {
+      const p = props as PublicModeProps;
+      const updated = isSelected
+        ? p.publicOwnLists.filter((id) => id !== listId)
+        : [...p.publicOwnLists, listId];
+      p.onPublicOwnListsChange(updated);
+      p.onPublicCatalogOrderChange(newOrder);
+      return;
+    }
+    const p = props as FullModeProps;
+    const updated = isSelected
+      ? p.preferences.ownLists.filter((id) => id !== listId)
+      : [...p.preferences.ownLists, listId];
+    p.onPreferencesChange({ ...p.preferences, ownLists: updated, catalogOrder: newOrder });
+  };
+
+  const selectAllOwnLists = () => {
+    const allIds = lists.map((l) => l.id);
+    const currentOrder = getCatalogOrder();
+    const existingSet = new Set(currentOrder);
+    const newItems = allIds.map((id) => `letterboxd-list-${id}`).filter((catId) => !existingSet.has(catId));
+    const newOrder = [...currentOrder, ...newItems];
+    if (isPublic) {
+      (props as PublicModeProps).onPublicOwnListsChange(allIds);
+      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+      return;
+    }
+    const p = props as FullModeProps;
+    p.onPreferencesChange({ ...p.preferences, ownLists: allIds, catalogOrder: newOrder });
+  };
+
+  const deselectAllOwnLists = () => {
+    const ownListCatIds = new Set(lists.map((l) => `letterboxd-list-${l.id}`));
+    const newOrder = getCatalogOrder().filter((id) => !ownListCatIds.has(id));
+    if (isPublic) {
+      (props as PublicModeProps).onPublicOwnListsChange([]);
+      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+      return;
+    }
+    const p = props as FullModeProps;
+    p.onPreferencesChange({ ...p.preferences, ownLists: [], catalogOrder: newOrder });
+  };
+
+  const isOwnListSelected = (listId: string): boolean => {
+    if (isPublic) return (props as PublicModeProps).publicOwnLists.includes(listId);
+    return (props as FullModeProps).preferences.ownLists.includes(listId);
+  };
+
+  const removeExternalList = (listId: string) => {
+    const catId = `letterboxd-list-${listId}`;
+    const newOrder = getCatalogOrder().filter((id) => id !== catId);
+    if (isPublic) {
+      (props as PublicModeProps).onRemovePublicList(listId);
+      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+      return;
+    }
+    const p = props as FullModeProps;
+    p.onPreferencesChange({
+      ...p.preferences,
+      externalLists: p.preferences.externalLists.filter((l) => l.id !== listId),
+      catalogOrder: newOrder,
+    });
+  };
+
+  const removeExternalWatchlist = (username: string) => {
+    const catId = `letterboxd-watchlist-${username}`;
+    const newOrder = getCatalogOrder().filter((id) => id !== catId);
+    if (isPublic) {
+      (props as PublicModeProps).onRemovePublicExternalWatchlist(username);
+      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+      return;
+    }
+    const p = props as FullModeProps;
+    p.onPreferencesChange({
+      ...p.preferences,
+      externalWatchlists: (p.preferences.externalWatchlists || []).filter((w) => w.username !== username),
+      catalogOrder: newOrder,
+    });
+  };
+
+  // ── Active items computation ──────────────────────────────────────────────
+
   const externalListsToShow = isPublic
     ? (props as PublicModeProps).publicLists
     : (props as FullModeProps).preferences.externalLists;
 
-  // External watchlists to display
   const externalWatchlistsToShow = isPublic
     ? (props as PublicModeProps).publicExternalWatchlists
     : (props as FullModeProps).preferences.externalWatchlists || [];
 
-  const ownListCount = isPublic
-    ? (props as PublicModeProps).publicOwnLists.length
-    : (props as FullModeProps).preferences.ownLists.length;
+  const selectedOwnListIds = isPublic
+    ? (props as PublicModeProps).publicOwnLists
+    : (props as FullModeProps).preferences.ownLists;
 
-  const hasExternalItems = externalListsToShow.length > 0 || externalWatchlistsToShow.length > 0;
+  // Base defs applicable to this mode
+  const applicableBaseDefs = ALL_BASE_DEFS.filter((d) => {
+    if (isPublic && (d.key === "diary" || d.key === "friends")) return false;
+    if (isPublic && (d.key === "watchlist" || d.key === "likedFilms") && !hasUsername) return false;
+    return true;
+  });
+
+  // Build ordered map of active items (insertion order = natural default order)
+  const allActiveItemsMap = new Map<string, ActiveCatalogItem>();
+
+  for (const def of applicableBaseDefs) {
+    if (getCatalogEnabled(def.key)) {
+      allActiveItemsMap.set(def.id, { id: def.id, type: "base", key: def.key, label: def.label, description: def.description });
+    }
+  }
+  for (const listId of selectedOwnListIds) {
+    const list = lists.find((l) => l.id === listId);
+    if (list) {
+      const catId = `letterboxd-list-${listId}`;
+      allActiveItemsMap.set(catId, { id: catId, type: "ownList", listId, label: list.name, filmCount: list.filmCount });
+    }
+  }
+  for (const ext of externalListsToShow) {
+    const catId = `letterboxd-list-${ext.id}`;
+    allActiveItemsMap.set(catId, { id: catId, type: "externalList", list: ext });
+  }
+  for (const w of externalWatchlistsToShow) {
+    const catId = `letterboxd-watchlist-${w.username}`;
+    allActiveItemsMap.set(catId, { id: catId, type: "externalWatchlist", watchlist: w });
+  }
+
+  // Sort by catalogOrder (items not in order go to end, preserving insertion order among them)
+  const catalogOrder = getCatalogOrder();
+  const sortedActiveItems: ActiveCatalogItem[] = [];
+  const remaining = new Map(allActiveItemsMap);
+  for (const id of catalogOrder) {
+    const item = remaining.get(id);
+    if (item) { sortedActiveItems.push(item); remaining.delete(id); }
+  }
+  for (const item of remaining.values()) {
+    sortedActiveItems.push(item);
+  }
+
+  const effectiveCatalogOrder = sortedActiveItems.map((item) => item.id);
+  const disabledBaseItems = applicableBaseDefs.filter((def) => !getCatalogEnabled(def.key));
+
+  // ── DnD handler ───────────────────────────────────────────────────────────
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = effectiveCatalogOrder.indexOf(String(active.id));
+    const newIndex = effectiveCatalogOrder.indexOf(String(over.id));
+    if (oldIndex !== -1 && newIndex !== -1) {
+      setCatalogOrder(arrayMove(effectiveCatalogOrder, oldIndex, newIndex));
+    }
+  };
+
+  // ── Item rendering helpers ────────────────────────────────────────────────
+
+  const getItemDisplayName = (item: ActiveCatalogItem): string => {
+    switch (item.type) {
+      case "base": return getCatalogDisplayName(item.id, item.label);
+      case "ownList": return getCatalogDisplayName(item.id, item.label);
+      case "externalList": return getCatalogDisplayName(item.id, item.list.name);
+      case "externalWatchlist": {
+        const def = `${item.watchlist.displayName}'s Watchlist`;
+        return getCatalogDisplayName(item.id, def);
+      }
+    }
+  };
+
+  const getItemDefaultName = (item: ActiveCatalogItem): string => {
+    switch (item.type) {
+      case "base": return item.label;
+      case "ownList": return item.label;
+      case "externalList": return `${item.list.name} (${item.list.owner})`;
+      case "externalWatchlist": return `${item.watchlist.displayName}'s Watchlist`;
+    }
+  };
+
+  const getItemSubtext = (item: ActiveCatalogItem): string => {
+    switch (item.type) {
+      case "base": return item.description;
+      case "ownList": return `${item.filmCount} films`;
+      case "externalList": return `by ${item.list.owner} · ${item.list.filmCount} films`;
+      case "externalWatchlist": return `@${item.watchlist.username} · watchlist`;
+    }
+  };
+
+  const renderActiveItemAction = (item: ActiveCatalogItem) => {
+    if (item.type === "base") {
+      return <Toggle enabled={true} onToggle={() => toggleCatalog(item.key)} />;
+    }
+    const onRemove =
+      item.type === "ownList" ? () => toggleOwnList(item.listId)
+      : item.type === "externalList" ? () => removeExternalList(item.list.id)
+      : () => removeExternalWatchlist(item.watchlist.username);
+    return (
+      <button type="button" onClick={onRemove} className="flex-shrink-0 text-zinc-500 transition-colors hover:text-zinc-300">
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={TRASH_PATH} />
+        </svg>
+      </button>
+    );
+  };
+
+  const ownListCount = selectedOwnListIds.length;
 
   return (
     <div className="fixed inset-0 flex h-screen w-screen items-center justify-center bg-[#0a0a0a] px-4 py-5 text-white sm:px-6">
@@ -353,35 +573,60 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
             </p>
           </div>
 
-          {/* Catalogs */}
+          {/* Active Catalogs */}
           <div className="mt-7">
-            <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-400">Catalogs</h3>
-            <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              {catalogItems.map((item) => (
-                <div
-                  key={item.key}
-                  className="flex items-center justify-between rounded-lg bg-zinc-800/35 px-3.5 py-3 transition-colors hover:bg-zinc-800/55"
-                >
-                  <div className="min-w-0 flex-1 pr-3">
-                    <EditableName
-                      catalogId={item.catalogId}
-                      displayName={getCatalogDisplayName(item.catalogId, item.label)}
-                      editingCatalogId={editingCatalogId}
-                      editingName={editingName}
-                      onEditingNameChange={setEditingName}
-                      onStartEditing={() => startEditingCatalogName(item.catalogId, getCatalogDisplayName(item.catalogId, item.label))}
-                      onSave={() => saveCatalogName(item.catalogId, item.label)}
-                      onCancel={() => setEditingCatalogId(null)}
-                    />
-                    <p className="text-[11px] leading-relaxed text-zinc-500">{item.description}</p>
-                  </div>
-                  <Toggle
-                    enabled={getCatalogEnabled(item.key)}
-                    onToggle={() => toggleCatalog(item.key)}
-                  />
-                </div>
-              ))}
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-400">Catalogs</h3>
+              {sortedActiveItems.length > 1 && (
+                <p className="text-[10px] text-zinc-600">drag to reorder</p>
+              )}
             </div>
+
+            {sortedActiveItems.length > 0 && (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={effectiveCatalogOrder} strategy={verticalListSortingStrategy}>
+                  <div className="mt-3 space-y-1.5">
+                    {sortedActiveItems.map((item) => (
+                      <SortableCatalogRow key={item.id} id={item.id}>
+                        <div className="min-w-0 flex-1 pr-2">
+                          <EditableName
+                            catalogId={item.id}
+                            displayName={getItemDisplayName(item)}
+                            editingCatalogId={editingCatalogId}
+                            editingName={editingName}
+                            onEditingNameChange={setEditingName}
+                            onStartEditing={() => startEditingCatalogName(item.id, getItemDisplayName(item))}
+                            onSave={() => saveCatalogName(item.id, getItemDefaultName(item))}
+                            onCancel={() => setEditingCatalogId(null)}
+                          />
+                          <p className="text-[11px] text-zinc-500">{getItemSubtext(item)}</p>
+                        </div>
+                        {renderActiveItemAction(item)}
+                      </SortableCatalogRow>
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            )}
+
+            {/* Disabled base catalogs */}
+            {disabledBaseItems.length > 0 && (
+              <div className={`${sortedActiveItems.length > 0 ? "mt-1.5" : "mt-3"} space-y-1.5`}>
+                {disabledBaseItems.map((def) => (
+                  <div
+                    key={def.key}
+                    className="flex items-center gap-2 rounded-lg bg-zinc-800/15 px-3 py-2.5 opacity-50"
+                  >
+                    <div className="w-4 flex-shrink-0" />
+                    <div className="min-w-0 flex-1 pr-2">
+                      <p className="truncate text-[13px] font-medium text-zinc-400">{def.label}</p>
+                      <p className="text-[11px] text-zinc-600">{def.description}</p>
+                    </div>
+                    <Toggle enabled={false} onToggle={() => toggleCatalog(def.key)} />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Display Options */}
@@ -433,7 +678,7 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
             </div>
           )}
 
-          {/* External lists & watchlists */}
+          {/* Add External Lists */}
           <div className="mt-7">
             <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-400">
               {isPublic ? "Public Lists & Watchlists" : "External Lists & Watchlists"}
@@ -463,79 +708,6 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
                 {isResolvingList ? "..." : "Add"}
               </button>
             </div>
-
-            {hasExternalItems && (
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {externalListsToShow.map((list) => {
-                  const extCatId = `letterboxd-list-${list.id}`;
-                  const extDefaultName = `${list.name} (${list.owner})`;
-                  return (
-                    <div
-                      key={`list-${list.id}`}
-                      className="flex items-center gap-3 rounded-lg bg-zinc-800/35 px-3.5 py-2.5"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <EditableName
-                          catalogId={extCatId}
-                          displayName={getCatalogDisplayName(extCatId, list.name)}
-                          editingCatalogId={editingCatalogId}
-                          editingName={editingName}
-                          onEditingNameChange={setEditingName}
-                          onStartEditing={() => startEditingCatalogName(extCatId, getCatalogDisplayName(extCatId, list.name))}
-                          onSave={() => saveCatalogName(extCatId, extDefaultName)}
-                          onCancel={() => setEditingCatalogId(null)}
-                        />
-                        <p className="text-[11px] text-zinc-500">
-                          by {list.owner} &middot; {list.filmCount} films
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeExternalList(list.id)}
-                        className="flex-shrink-0 text-zinc-500 transition-colors hover:text-zinc-300"
-                      >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  );
-                })}
-                {externalWatchlistsToShow.map((w) => {
-                  const wCatId = `letterboxd-watchlist-${w.username}`;
-                  const wDefaultName = `${w.displayName}'s Watchlist`;
-                  return (
-                    <div
-                      key={`watchlist-${w.username}`}
-                      className="flex items-center gap-3 rounded-lg bg-zinc-800/35 px-3.5 py-2.5"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <EditableName
-                          catalogId={wCatId}
-                          displayName={getCatalogDisplayName(wCatId, wDefaultName)}
-                          editingCatalogId={editingCatalogId}
-                          editingName={editingName}
-                          onEditingNameChange={setEditingName}
-                          onStartEditing={() => startEditingCatalogName(wCatId, getCatalogDisplayName(wCatId, wDefaultName))}
-                          onSave={() => saveCatalogName(wCatId, wDefaultName)}
-                          onCancel={() => setEditingCatalogId(null)}
-                        />
-                        <p className="text-[11px] text-zinc-500">@{w.username} &middot; watchlist</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeExternalWatchlist(w.username)}
-                        className="flex-shrink-0 text-zinc-500 transition-colors hover:text-zinc-300"
-                      >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
 
           {/* User lists */}

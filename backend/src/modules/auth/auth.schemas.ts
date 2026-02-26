@@ -34,6 +34,7 @@ export const userPreferencesSchema = z.object({
   showActions: z.boolean().default(true),
   showRatings: z.boolean().default(true),
   catalogNames: z.record(z.string()).optional(),
+  catalogOrder: z.array(z.string()).optional(),
 });
 
 export const loginResponseSchema = z.object({
