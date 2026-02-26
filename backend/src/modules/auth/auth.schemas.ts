@@ -25,6 +25,12 @@ export const userPreferencesSchema = z.object({
       filmCount: z.number(),
     })
   ),
+  externalWatchlists: z.array(
+    z.object({
+      username: z.string(),
+      displayName: z.string(),
+    })
+  ).optional(),
   showActions: z.boolean().default(true),
   showRatings: z.boolean().default(true),
   catalogNames: z.record(z.string()).optional(),
