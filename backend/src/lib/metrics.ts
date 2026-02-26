@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { getDb } from '../db/index.js';
 
 function sinceDate(days: number): string {
+  if (days === 0) return '1970-01-01T00:00:00.000Z';
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 

@@ -101,6 +101,7 @@ const TIME_RANGES = [
   { label: '7d', days: 7 },
   { label: '30d', days: 30 },
   { label: '90d', days: 90 },
+  { label: 'All', days: 0 },
 ] as const;
 
 export default function Dashboard() {

@@ -82,7 +82,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const days = request.query.days ? parseInt(request.query.days, 10) : 30;
       const limit = request.query.limit ? parseInt(request.query.limit, 10) : 50;
 
-      const clampedDays = Math.min(Math.max(days, 1), 365);
+      const clampedDays = days === 0 ? 0 : Math.min(Math.max(days, 1), 365);
       const clampedLimit = Math.min(Math.max(limit, 1), 100);
 
       return getTopUsers(clampedDays, clampedLimit);
@@ -99,7 +99,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     },
     async (request) => {
       const days = request.query.days ? parseInt(request.query.days, 10) : 30;
-      const clampedDays = Math.min(Math.max(days, 1), 365);
+      const clampedDays = days === 0 ? 0 : Math.min(Math.max(days, 1), 365);
 
       return getMetricsSummary(clampedDays, true);
     }
@@ -115,7 +115,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     },
     async (request) => {
       const days = request.query.days ? parseInt(request.query.days, 10) : 30;
-      const clampedDays = Math.min(Math.max(days, 1), 365);
+      const clampedDays = days === 0 ? 0 : Math.min(Math.max(days, 1), 365);
 
       const topFilms = getTopStreamedFilms(clampedDays, 15);
       const topLists = getTopAccessedLists(clampedDays, 15);
