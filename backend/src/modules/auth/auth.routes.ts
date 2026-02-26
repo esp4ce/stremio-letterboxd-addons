@@ -9,7 +9,7 @@ import {
 } from '../../db/repositories/user.repository.js';
 import { loginRateLimit } from '../../middleware/rate-limit.js';
 import { trackEvent } from '../../lib/metrics.js';
-import { generateAnonId } from '../../lib/anonymous-id.js';
+import { usernameToAnonId } from '../../lib/anonymous-id.js';
 import { callWithAppToken } from '../../lib/app-client.js';
 import { config } from '../../config/index.js';
 import {
@@ -257,7 +257,7 @@ export async function authRoutes(app: FastifyInstance) {
           return { valid: false };
         }
 
-        trackEvent('validate_username', undefined, { found: true }, generateAnonId(request));
+        trackEvent('validate_username', undefined, { found: true }, usernameToAnonId(parsed.data.username));
 
         // Fetch user's public lists
         const listsResponse = await callWithAppToken((token) =>
