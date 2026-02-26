@@ -63,7 +63,9 @@ backend/dist/
 backend/node_modules/
 backend/certs/
 backend/tests/
-backend/src/db/migrations/
+backend/src/db/migrations/001_create_users.sql
+backend/src/db/migrations/002_add_user_preferences.sql
+backend/src/db/migrations/003_create_events.sql
 
 # Postman
 *.postman_collection.json

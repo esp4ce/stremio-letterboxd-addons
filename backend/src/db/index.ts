@@ -58,7 +58,7 @@ function runMigrations(database: Database.Database): void {
     .all() as Array<{ name: string }>;
   const appliedSet = new Set(appliedMigrations.map((m) => m.name));
 
-  const migrationFiles = ['001_create_users.sql', '002_add_user_preferences.sql', '003_create_events.sql'];
+  const migrationFiles = ['001_create_users.sql', '002_add_user_preferences.sql', '003_create_events.sql', '004_add_anonymous_tracking.sql'];
 
   for (const file of migrationFiles) {
     if (appliedSet.has(file)) {
