@@ -85,8 +85,8 @@ interface MetricsSummaryData {
   };
 }
 
-interface AnonymousData {
-  uniqueUsers: { authenticated: number; anonymous: number; total: number };
+interface AudienceData {
+  uniqueUsers: { tier1: number; tier2: number; total: number };
   peakHours: Array<{ hour: number; count: number }>;
   survival: { avgDays: number; medianDays: number };
   funnel: { manifestViews: number; catalogFetches: number; authenticated: number };
@@ -106,7 +106,7 @@ export default function Dashboard() {
   const [healthData, setHealthData] = useState<DetailedHealthData | null>(null);
   const [usersData, setUsersData] = useState<TopUsersData | null>(null);
   const [metricsData, setMetricsData] = useState<MetricsSummaryData | null>(null);
-  const [anonymousData, setAnonymousData] = useState<AnonymousData | null>(null);
+  const [audienceData, setAudienceData] = useState<AudienceData | null>(null);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
 
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
@@ -151,12 +151,12 @@ export default function Dashboard() {
       const health = (await healthRes.json()) as DetailedHealthData;
       const users = (await usersRes.json()) as TopUsersData;
       const metrics = (await metricsRes.json()) as MetricsSummaryData;
-      const anonymous = anonRes.ok ? (await anonRes.json()) as AnonymousData : null;
+      const anonymous = anonRes.ok ? (await anonRes.json()) as AudienceData : null;
 
       setHealthData(health);
       setUsersData(users);
       setMetricsData(metrics);
-      setAnonymousData(anonymous);
+      setAudienceData(anonymous);
       setError('');
       setLoading(false);
     } catch (err) {
@@ -258,7 +258,7 @@ export default function Dashboard() {
         {activeTab === 'overview' && (
           <>
             {/* Overview Stats */}
-            {usersData && <OverviewStats data={usersData.overview} anonymousData={anonymousData} />}
+            {usersData && <OverviewStats data={usersData.overview} audienceData={audienceData} />}
 
             {/* System Health + Database (2 columns) */}
             <div className="grid gap-6 md:grid-cols-2">
@@ -283,18 +283,18 @@ export default function Dashboard() {
           </>
         )}
 
-        {activeTab === 'insights' && anonymousData && (
+        {activeTab === 'insights' && audienceData && (
           <>
             {/* Top Streamed Films */}
             <div className="grid gap-6 md:grid-cols-2">
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Top Films (streams)</h2>
-                {anonymousData.topFilms.length === 0 ? (
+                {audienceData.topFilms.length === 0 ? (
                   <p className="text-sm text-zinc-500">Aucune donnée</p>
                 ) : (
                   <div className="space-y-2">
-                    {anonymousData.topFilms.map((film, i) => {
-                      const maxCount = anonymousData.topFilms[0]!.count;
+                    {audienceData.topFilms.map((film, i) => {
+                      const maxCount = audienceData.topFilms[0]!.count;
                       return (
                         <div key={film.imdbId} className="flex items-center gap-3">
                           <span className="w-5 text-right text-xs text-zinc-500">{i + 1}</span>
@@ -325,12 +325,12 @@ export default function Dashboard() {
               {/* Top Lists */}
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Top Listes (catalog views)</h2>
-                {anonymousData.topLists.length === 0 ? (
+                {audienceData.topLists.length === 0 ? (
                   <p className="text-sm text-zinc-500">Aucune donnée</p>
                 ) : (
                   <div className="space-y-2">
-                    {anonymousData.topLists.map((list, i) => {
-                      const maxCount = anonymousData.topLists[0]!.count;
+                    {audienceData.topLists.map((list, i) => {
+                      const maxCount = audienceData.topLists[0]!.count;
                       return (
                         <div key={list.listId} className="flex items-center gap-3">
                           <span className="w-5 text-right text-xs text-zinc-500">{i + 1}</span>
@@ -358,12 +358,12 @@ export default function Dashboard() {
               {/* User Actions */}
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Actions utilisateur</h2>
-                {anonymousData.actions.length === 0 ? (
+                {audienceData.actions.length === 0 ? (
                   <p className="text-sm text-zinc-500">Aucune donnée</p>
                 ) : (
                   <div className="space-y-3">
-                    {anonymousData.actions.map((a) => {
-                      const maxCount = Math.max(...anonymousData.actions.map((x) => x.count), 1);
+                    {audienceData.actions.map((a) => {
+                      const maxCount = Math.max(...audienceData.actions.map((x) => x.count), 1);
                       const label = a.action.replace('action_', '');
                       return (
                         <div key={a.action}>
@@ -384,12 +384,12 @@ export default function Dashboard() {
               {/* Catalog Breakdown by tier */}
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Catalogs par tier</h2>
-                {anonymousData.catalogBreakdown.length === 0 ? (
+                {audienceData.catalogBreakdown.length === 0 ? (
                   <p className="text-sm text-zinc-500">Aucune donnée</p>
                 ) : (
                   <div className="space-y-2">
-                    {anonymousData.catalogBreakdown.map((c) => {
-                      const maxCount = Math.max(...anonymousData.catalogBreakdown.map((x) => x.count), 1);
+                    {audienceData.catalogBreakdown.map((c) => {
+                      const maxCount = Math.max(...audienceData.catalogBreakdown.map((x) => x.count), 1);
                       const name = c.catalog.replace('catalog_', '');
                       return (
                         <div key={`${c.catalog}-${c.tier}`}>
@@ -414,11 +414,11 @@ export default function Dashboard() {
             </div>
 
             {/* Top Actioned Films */}
-            {anonymousData.topActionedFilms.length > 0 && (
+            {audienceData.topActionedFilms.length > 0 && (
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Top films (actions)</h2>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {anonymousData.topActionedFilms.map((f, i) => (
+                  {audienceData.topActionedFilms.map((f, i) => (
                     <div key={`${f.filmId}-${f.action}-${i}`} className="flex items-center justify-between rounded-lg bg-zinc-800/50 px-3 py-2">
                       <div className="text-sm">
                         <span className="text-zinc-300 truncate max-w-[180px]" title={f.title ?? f.filmId}>{f.title ?? f.filmId}</span>
@@ -440,40 +440,40 @@ export default function Dashboard() {
           </>
         )}
 
-        {activeTab === 'audience' && anonymousData && (
+        {activeTab === 'audience' && audienceData && (
           <>
             {/* Unique Users Breakdown */}
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
-                <p className="text-sm text-zinc-400">Authenticated Users</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{anonymousData.uniqueUsers.authenticated}</p>
+                <p className="text-sm text-zinc-400">Tier 2 (authenticated)</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.uniqueUsers.tier2}</p>
               </div>
               <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
-                <p className="text-sm text-zinc-400">Anonymous Users</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{anonymousData.uniqueUsers.anonymous}</p>
+                <p className="text-sm text-zinc-400">Tier 1 (public config)</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.uniqueUsers.tier1}</p>
               </div>
               <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
                 <p className="text-sm text-zinc-400">Total Unique</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{anonymousData.uniqueUsers.total}</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.uniqueUsers.total}</p>
               </div>
             </div>
 
             {/* Peak Hours + Funnel (2 columns) */}
             <div className="grid gap-6 md:grid-cols-2">
-              <PeakHoursChart data={anonymousData.peakHours} />
+              <PeakHoursChart data={audienceData.peakHours} />
 
               <div className="rounded-xl bg-zinc-900/50 p-6 ring-1 ring-zinc-800">
                 <h2 className="mb-4 text-lg font-semibold">Funnel d&apos;usage</h2>
                 <div className="space-y-3">
                   {[
-                    { label: 'Manifest Views', value: anonymousData.funnel.manifestViews },
-                    { label: 'Catalog Fetches', value: anonymousData.funnel.catalogFetches },
-                    { label: 'Authenticated', value: anonymousData.funnel.authenticated },
+                    { label: 'Manifest Views', value: audienceData.funnel.manifestViews },
+                    { label: 'Catalog Fetches', value: audienceData.funnel.catalogFetches },
+                    { label: 'Authenticated', value: audienceData.funnel.authenticated },
                   ].map((step) => {
                     const maxVal = Math.max(
-                      anonymousData.funnel.manifestViews,
-                      anonymousData.funnel.catalogFetches,
-                      anonymousData.funnel.authenticated,
+                      audienceData.funnel.manifestViews,
+                      audienceData.funnel.catalogFetches,
+                      audienceData.funnel.authenticated,
                       1
                     );
                     const barPct = Math.min(Math.round((step.value / maxVal) * 100), 100);
@@ -500,12 +500,12 @@ export default function Dashboard() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
                 <p className="text-sm text-zinc-400">Durée moy. d&apos;utilisation</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{anonymousData.survival.avgDays} jours</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.survival.avgDays} jours</p>
                 <p className="mt-0.5 text-xs text-zinc-500">Entre 1er et dernier event (auth uniquement)</p>
               </div>
               <div className="rounded-xl bg-zinc-900/50 p-4 ring-1 ring-zinc-800">
                 <p className="text-sm text-zinc-400">Durée médiane d&apos;utilisation</p>
-                <p className="mt-1 text-2xl font-semibold text-white">{anonymousData.survival.medianDays} jours</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{audienceData.survival.medianDays} jours</p>
               </div>
             </div>
           </>

@@ -1,5 +1,5 @@
-interface AnonymousData {
-  uniqueUsers: { authenticated: number; anonymous: number; total: number };
+interface AudienceData {
+  uniqueUsers: { tier1: number; tier2: number; total: number };
   funnel: { manifestViews: number; catalogFetches: number; authenticated: number };
 }
 
@@ -13,19 +13,19 @@ interface OverviewStatsProps {
     newUsersLast7d: number;
     newUsersLast30d: number;
   };
-  anonymousData?: AnonymousData | null;
+  audienceData?: AudienceData | null;
 }
 
-export function OverviewStats({ data, anonymousData }: OverviewStatsProps) {
-  const uniqueTotal = anonymousData ? anonymousData.uniqueUsers.total : data.totalUsers;
-  const uniqueLabel = anonymousData ? `${anonymousData.uniqueUsers.authenticated} auth + ${anonymousData.uniqueUsers.anonymous} anon` : '';
+export function OverviewStats({ data, audienceData }: OverviewStatsProps) {
+  const uniqueTotal = audienceData ? audienceData.uniqueUsers.total : data.totalUsers;
+  const uniqueLabel = audienceData ? `${audienceData.uniqueUsers.tier2} tier 2 + ${audienceData.uniqueUsers.tier1} tier 1` : '';
 
   const stats = [
     { label: 'Unique Users', value: uniqueTotal, sublabel: uniqueLabel, icon: '👥' },
     { label: 'Active (7d)', value: data.activeUsers7d, icon: '🟢' },
     { label: 'Active (30d)', value: data.activeUsers30d, icon: '🔵' },
     { label: 'Total Events', value: data.totalEvents.toLocaleString(), icon: '📊' },
-    { label: 'Installs Detected', value: anonymousData?.funnel.manifestViews ?? 0, icon: '📦' },
+    { label: 'Installs Detected', value: audienceData?.funnel.manifestViews ?? 0, icon: '📦' },
     { label: 'New Users (7d)', value: data.newUsersLast7d, icon: '✨' },
   ];
 

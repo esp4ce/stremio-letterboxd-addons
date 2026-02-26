@@ -22,7 +22,8 @@ export interface User {
   letterboxd_id: string;
   letterboxd_username: string;
   letterboxd_display_name: string | null;
-  encrypted_refresh_token: string;
+  encrypted_refresh_token: string | null;
+  tier: number;
   created_at: string;
   updated_at: string;
   last_login_at: string;
@@ -55,6 +56,11 @@ export function findUserByLetterboxdId(letterboxdId: string): User | null {
   const db = getDb();
   const stmt = db.prepare('SELECT * FROM users WHERE letterboxd_id = ?');
   return (stmt.get(letterboxdId) as User) ?? null;
+}
+
+export function findUserByLetterboxdUsername(username: string): User | null {
+  const db = getDb();
+  return (db.prepare('SELECT * FROM users WHERE letterboxd_username = ?').get(username) as User) ?? null;
 }
 
 export function createUser(input: CreateUserInput): User {
@@ -131,14 +137,40 @@ export function updateLastLogin(id: string): void {
 }
 
 export function getDecryptedRefreshToken(user: User): string {
+  if (!user.encrypted_refresh_token) {
+    throw new Error('User has no refresh token (Tier 1 user)');
+  }
   return decrypt(user.encrypted_refresh_token);
 }
 
+export function upsertTier1User(letterboxdId: string, username: string, displayName?: string): User {
+  const db = getDb();
+  const existing = findUserByLetterboxdId(letterboxdId);
+  if (existing) {
+    // Upgrade to Tier 2 if they already have a refresh token; otherwise just update display name
+    if (existing.tier === 1) {
+      db.prepare("UPDATE users SET letterboxd_display_name = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(displayName ?? null, existing.id);
+    }
+    return findUserById(existing.id) ?? existing;
+  }
+  return db.prepare(`
+    INSERT INTO users (letterboxd_id, letterboxd_username, letterboxd_display_name, encrypted_refresh_token, tier)
+    VALUES (?, ?, ?, NULL, 1)
+    RETURNING *
+  `).get(letterboxdId, username, displayName ?? null) as User;
+}
+
 export function upsertUser(input: CreateUserInput): User {
+  const db = getDb();
   const existing = findUserByLetterboxdId(input.letterboxdId);
 
   if (existing) {
     updateLastLogin(existing.id);
+    // Upgrade Tier 1 → Tier 2 when user authenticates with password
+    if (existing.tier === 1) {
+      db.prepare('UPDATE users SET tier = 2 WHERE id = ?').run(existing.id);
+    }
     const updated = updateUser(existing.id, {
       refreshToken: input.refreshToken,
       tokenExpiresAt: input.tokenExpiresAt,

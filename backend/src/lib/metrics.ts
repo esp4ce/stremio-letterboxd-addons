@@ -244,8 +244,8 @@ export function getTopUsers(days: number = 30, limit: number = 50): TopUsersMetr
 }
 
 export interface UniqueUsersCount {
-  authenticated: number;
-  anonymous: number;
+  tier1: number;
+  tier2: number;
   total: number;
 }
 
@@ -253,10 +253,10 @@ export function getTotalUniqueUsers(days: number = 30): UniqueUsersCount {
   const db = getDb();
   const since = sinceDate(days);
 
-  const authenticated = countQuery(db, 'SELECT COUNT(DISTINCT user_id) as count FROM events WHERE user_id IS NOT NULL AND created_at >= ?', since);
-  const anonymous = countQuery(db, 'SELECT COUNT(DISTINCT anonymous_id) as count FROM events WHERE user_id IS NULL AND anonymous_id IS NOT NULL AND created_at >= ?', since);
+  const tier2 = countQuery(db, `SELECT COUNT(DISTINCT e.user_id) as count FROM events e JOIN users u ON e.user_id = u.id WHERE u.tier = 2 AND e.created_at >= ?`, since);
+  const tier1 = countQuery(db, `SELECT COUNT(DISTINCT e.user_id) as count FROM events e JOIN users u ON e.user_id = u.id WHERE u.tier = 1 AND e.created_at >= ?`, since);
 
-  return { authenticated, anonymous, total: authenticated + anonymous };
+  return { tier1, tier2, total: tier1 + tier2 };
 }
 
 export interface PeakHourEntry {

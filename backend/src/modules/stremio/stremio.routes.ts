@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import {
   findUserById,
+  findUserByLetterboxdUsername,
   getDecryptedRefreshToken,
   getUserPreferences,
   updateUser,
@@ -51,7 +52,7 @@ import {
   cacheMetrics,
 } from '../../lib/cache.js';
 import { trackEvent, type EventType } from '../../lib/metrics.js';
-import { generateAnonId, usernameToAnonId } from '../../lib/anonymous-id.js';
+import { generateAnonId } from '../../lib/anonymous-id.js';
 import { callWithAppToken } from '../../lib/app-client.js';
 import { decodeConfig, type PublicConfig } from '../../lib/config-encoding.js';
 import { serverConfig } from '../../config/index.js';
@@ -78,6 +79,12 @@ const CATALOG_EVENT_MAP: Record<string, EventType> = {
 
 function catalogIdToEvent(id: string): EventType {
   return CATALOG_EVENT_MAP[id] ?? (id.startsWith('letterboxd-list-') ? 'catalog_list' : 'catalog_popular');
+}
+
+/** Track a Tier 1 event — resolve user_id from DB if username known, else anonymous fallback */
+function trackTier1(event: EventType, cfg: PublicConfig, request: FastifyRequest, extra?: Record<string, unknown>): void {
+  const userId = cfg.u ? findUserByLetterboxdUsername(cfg.u)?.id : undefined;
+  trackEvent(event, userId, { tier: 1, ...extra }, userId ? undefined : generateAnonId(request));
 }
 
 const IMDB_REGEX = /^tt\d{1,10}$/;
@@ -873,7 +880,7 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
-      trackEvent('manifest_view', undefined, { tier: 1 }, cfg.u ? usernameToAnonId(cfg.u) : generateAnonId(request));
+      trackTier1('manifest_view', cfg, request);
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
@@ -920,7 +927,7 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
-      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, cfg.u ? usernameToAnonId(cfg.u) : generateAnonId(request));
+      trackTier1(catalogIdToEvent(request.params.id), cfg, request, { catalog: request.params.id });
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
@@ -945,7 +952,7 @@ export async function stremioRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Invalid config' });
       }
 
-      trackEvent(catalogIdToEvent(request.params.id), undefined, { tier: 1, catalog: request.params.id }, cfg.u ? usernameToAnonId(cfg.u) : generateAnonId(request));
+      trackTier1(catalogIdToEvent(request.params.id), cfg, request, { catalog: request.params.id });
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
