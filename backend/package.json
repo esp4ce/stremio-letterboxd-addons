@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && if [ -d src/db/migrations ]; then cp -r src/db/migrations dist/db/; fi",
+    "build": "tsc && node -e \"const{cpSync,existsSync}=require('fs');if(existsSync('src/db/migrations'))cpSync('src/db/migrations','dist/db/migrations',{recursive:true});\"",
     "start": "node dist/index.js",
     "test": "vitest",
     "test:run": "vitest run",
