@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs';
 import { configure } from '@esp4ce/letterboxd-client';
 import { buildApp } from './app.js';
 import { initDb, closeDb } from './db/index.js';
-import { config, letterboxdConfig } from './config/index.js';
+import { config, catalogConfig } from './config/index.js';
 import { logger, createChildLogger } from './lib/logger.js';
 import { cleanupOldEvents } from './lib/metrics.js';
 
 async function main() {
-  logger.info('Starting Stremio Letterboxd Backend...');
+  logger.info('Starting Stremio Addon Backend...');
 
   initDb();
 
@@ -19,10 +19,10 @@ async function main() {
   }
 
   configure({
-    clientId: letterboxdConfig.clientId,
-    clientSecret: letterboxdConfig.clientSecret,
-    userAgent: letterboxdConfig.userAgent,
-    logger: createChildLogger('letterboxd'),
+    clientId: catalogConfig.clientId,
+    clientSecret: catalogConfig.clientSecret,
+    userAgent: catalogConfig.userAgent,
+    logger: createChildLogger('catalog-client'),
   });
 
   let app;

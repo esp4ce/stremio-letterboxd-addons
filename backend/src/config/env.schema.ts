@@ -11,9 +11,9 @@ export const envSchema = z.object({
   HTTPS_CERT_PATH: z.string().default('./certs/localhost-cert.pem'),
   HTTPS_KEY_PATH: z.string().default('./certs/localhost-key.pem'),
 
-  LETTERBOXD_CLIENT_ID: z.string().min(1),
-  LETTERBOXD_CLIENT_SECRET: z.string().min(1),
-  LETTERBOXD_USER_AGENT: z.string().default('StremioLetterboxdAddon/1.0.0'),
+  CATALOG_CLIENT_ID: z.string().min(1),
+  CATALOG_CLIENT_SECRET: z.string().min(1),
+  CATALOG_USER_AGENT: z.string().default('StremioAddon/1.0.0'),
 
   ENCRYPTION_KEY: z
     .string()
@@ -28,6 +28,8 @@ export const envSchema = z.object({
   CACHE_MAX_SIZE: z.coerce.number().default(1000),
   CACHE_FILM_TTL: z.coerce.number().default(3600),
   CACHE_WATCHLIST_TTL: z.coerce.number().default(300),
+
+  TMDB_API_KEY: z.string().min(1).optional(),
 
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   LOG_LEVEL: z

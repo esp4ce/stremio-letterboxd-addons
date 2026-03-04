@@ -16,10 +16,10 @@ function loadConfig(): Env {
 
 export const config = loadConfig();
 
-export const letterboxdConfig = {
-  clientId: config.LETTERBOXD_CLIENT_ID,
-  clientSecret: config.LETTERBOXD_CLIENT_SECRET,
-  userAgent: config.LETTERBOXD_USER_AGENT,
+export const catalogConfig = {
+  clientId: config.CATALOG_CLIENT_ID,
+  clientSecret: config.CATALOG_CLIENT_SECRET,
+  userAgent: config.CATALOG_USER_AGENT,
 } as const;
 
 export const jwtConfig = {
@@ -31,6 +31,10 @@ export const cacheConfig = {
   maxSize: config.CACHE_MAX_SIZE,
   filmTtl: config.CACHE_FILM_TTL * 1000,
   watchlistTtl: config.CACHE_WATCHLIST_TTL * 1000,
+} as const;
+
+export const tmdbConfig = {
+  apiKey: config.TMDB_API_KEY,
 } as const;
 
 export const serverConfig = {
