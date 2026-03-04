@@ -1426,8 +1426,8 @@ export async function stremioRoutes(app: FastifyInstance) {
         const letterboxdResult = await findFilmByImdb(client, imdbId);
         if (letterboxdResult) {
           const ratingData = await getFilmRatingData(client, letterboxdResult.letterboxdFilmId, user.id);
-          if (ratingData.communityRating !== null && rawMeta.poster) {
-            const badgedPoster = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(rawMeta.poster as string)}&rating=${ratingData.communityRating.toFixed(1)}`;
+          if (ratingData.communityRating !== null && rawMeta['poster']) {
+            const badgedPoster = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(rawMeta['poster'] as string)}&rating=${ratingData.communityRating.toFixed(1)}`;
             return { meta: { ...rawMeta, poster: badgedPoster } };
           }
         }

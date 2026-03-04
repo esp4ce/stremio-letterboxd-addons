@@ -103,7 +103,7 @@ export async function getRawCinemetaMeta(imdbId: string): Promise<Record<string,
     if (!response.ok) return null;
 
     const data = await response.json() as { meta?: Record<string, unknown> };
-    if (!data.meta?.name) return null;
+    if (!data.meta?.['name']) return null;
 
     cinemetaRawCache.set(imdbId, data.meta);
     return data.meta;
