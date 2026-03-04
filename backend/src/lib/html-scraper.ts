@@ -7,7 +7,7 @@ const LIST_LIKEABLE_IDENTIFIER_REGEX =
   /data-likeable-identifier='([^']+)'/;
 
 const BROWSER_FETCH_OPTIONS: RequestInit = {
-  headers: { 'User-Agent': config.LETTERBOXD_USER_AGENT },
+  headers: { 'User-Agent': config.CATALOG_USER_AGENT },
   redirect: 'follow',
 };
 
