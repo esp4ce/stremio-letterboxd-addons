@@ -31,9 +31,13 @@ import {
   transformActivityToMetas,
   transformListEntriesToMetas,
   cacheFilmMapping,
+  getImdbId,
+  getTmdbId,
+  getPosterUrl,
+  buildPosterUrl,
   StremioMeta,
 } from './catalog.service.js';
-import { buildLetterboxdStreams, findFilmByImdb, getFilmRatingData, getFullFilmInfoFromCinemeta } from './meta.service.js';
+import { buildLetterboxdStreams, findFilmByImdb, getRawCinemetaMeta, getFilmRatingData } from './meta.service.js';
 import { generateRatedPoster } from './poster.service.js';
 import { createChildLogger } from '../../lib/logger.js';
 import {
@@ -50,12 +54,15 @@ import {
   setUserCatalog,
   invalidateUserCatalogs,
   cacheMetrics,
+  recommendationCache,
+  tmdbToImdbCache,
 } from '../../lib/cache.js';
 import { trackEvent, type EventType } from '../../lib/metrics.js';
 import { generateAnonId } from '../../lib/anonymous-id.js';
 import { callWithAppToken } from '../../lib/app-client.js';
 import { decodeConfig, type PublicConfig } from '../../lib/config-encoding.js';
-import { serverConfig } from '../../config/index.js';
+import { serverConfig, tmdbConfig } from '../../config/index.js';
+import { getTmdbRecommendations, getTmdbExternalIds } from '../../lib/tmdb-client.js';
 
 const logger = createChildLogger('stremio-routes');
 
@@ -379,6 +386,269 @@ async function fetchLikedFilmsCatalog(
 }
 
 /**
+ * Fetch personalized recommendations based on user's rated/liked films → TMDB recommendations → aggregate by frequency
+ */
+async function fetchRecommendationsCatalog(
+  user: User,
+  skip: number = 0,
+  showRatings: boolean = true,
+  sort?: string,
+): Promise<{ metas: StremioMeta[] }> {
+  const apiKey = tmdbConfig.apiKey;
+  if (!apiKey) return { metas: [] };
+
+  const cacheKey = `reco:${user.id}:${sort ?? 'default'}`;
+  const cached = recommendationCache.get(cacheKey);
+  if (cached) {
+    return { metas: cached.metas.slice(skip, skip + CATALOG_PAGE_SIZE) };
+  }
+
+  const client = await createClientForUser(user);
+
+  // 1. Collect seed films (rated + liked in parallel, then watchlist)
+  const seeds: WatchlistFilm[] = [];
+  // Collect watchlist IMDb IDs during seed phase to avoid re-fetching for exclusion
+  const watchlistImdbIds = new Set<string>();
+
+  // Fetch rated and liked in parallel (both independent)
+  const [ratedResult, likedResult] = await Promise.allSettled([
+    client.getFilms({
+      member: user.letterboxd_id,
+      memberRelationship: 'Watched',
+      sort: 'AuthenticatedMemberRatingHighToLow',
+      perPage: 100,
+    }),
+    client.getFilms({
+      member: user.letterboxd_id,
+      memberRelationship: 'Liked',
+      perPage: 50,
+    }),
+  ]);
+
+  // Priority 1: highly rated films
+  if (ratedResult.status === 'fulfilled') {
+    const highRated = ratedResult.value.items.filter((f) => f.rating != null && f.rating >= 4);
+    seeds.push(...highRated.slice(0, 50));
+  } else {
+    logger.warn({ err: ratedResult.reason, userId: user.id }, 'Failed to fetch rated films for recommendations');
+  }
+
+  // Priority 2: liked films (if not enough seeds)
+  if (seeds.length < 10 && likedResult.status === 'fulfilled') {
+    for (const film of likedResult.value.items) {
+      if (seeds.length >= 30) break;
+      if (!seeds.some((s) => s.id === film.id)) seeds.push(film);
+    }
+  } else if (likedResult.status === 'rejected') {
+    logger.warn({ err: likedResult.reason, userId: user.id }, 'Failed to fetch liked films for recommendations');
+  }
+
+  // Always fetch watchlist for exclusion, and use as seed fallback
+  try {
+    let cursor: string | undefined;
+    let page = 0;
+    do {
+      page++;
+      const wl = await client.getWatchlist({ perPage: 100, cursor });
+      for (const film of wl.items) {
+        const imdbId = getImdbId(film);
+        if (imdbId) watchlistImdbIds.add(imdbId);
+        // Use as seed fallback if not enough
+        if (seeds.length < 20 && !seeds.some((s) => s.id === film.id)) {
+          seeds.push(film);
+        }
+      }
+      cursor = wl.cursor;
+    } while (cursor && page < 10);
+  } catch (err) {
+    logger.warn({ err, userId: user.id }, 'Failed to fetch watchlist for recommendations');
+  }
+
+  if (seeds.length === 0) {
+    recommendationCache.set(cacheKey, { metas: [] });
+    return { metas: [] };
+  }
+
+  // 2. Extract TMDB IDs from seeds, keep rating weight per seed
+  // Weight: 5★=2.0, 4.5★=1.5, 4★=1.0, liked/watchlist=0.5
+  const seedEntries: { tmdbId: number; weight: number }[] = [];
+  const seedImdbIds = new Set<string>();
+  for (const film of seeds) {
+    const tmdbId = getTmdbId(film);
+    const imdb = getImdbId(film);
+    if (imdb) seedImdbIds.add(imdb);
+    cacheFilmMapping(film);
+    if (!tmdbId) continue;
+    const rating = film.rating ?? 0;
+    const weight = rating >= 5 ? 2.0 : rating >= 4.5 ? 1.5 : rating >= 4 ? 1.0 : 0.5;
+    seedEntries.push({ tmdbId, weight });
+  }
+
+  // 3. Fan out to TMDB recommendations (max 50 seeds)
+  const tmdbSeeds = seedEntries.slice(0, 50);
+  const recoResults = await Promise.allSettled(
+    tmdbSeeds.map(({ tmdbId }) => getTmdbRecommendations(tmdbId, apiKey)),
+  );
+
+  // 4. Aggregate by weighted score (higher-rated seeds contribute more)
+  const scoreMap = new Map<number, { score: number; title: string; releaseYear?: number; posterPath?: string | null }>();
+  for (let i = 0; i < recoResults.length; i++) {
+    const result = recoResults[i];
+    if (result?.status !== 'fulfilled') continue;
+    const weight = tmdbSeeds[i]?.weight ?? 1;
+    for (const reco of result.value) {
+      const existing = scoreMap.get(reco.id);
+      if (existing) {
+        existing.score += weight;
+      } else {
+        const year = reco.release_date ? parseInt(reco.release_date.slice(0, 4), 10) : undefined;
+        scoreMap.set(reco.id, {
+          score: weight,
+          title: reco.title,
+          releaseYear: year && !isNaN(year) ? year : undefined,
+          posterPath: reco.poster_path,
+        });
+      }
+    }
+  }
+
+  // 5. Sort by weighted score, take top 250 (generous pool before exclusion)
+  const sorted = [...scoreMap.entries()]
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, 250);
+
+  // 6. Resolve TMDB IDs → IMDb IDs
+  const unresolvedIds: number[] = [];
+  for (const [tmdbId] of sorted) {
+    if (!tmdbToImdbCache.get(String(tmdbId))) {
+      unresolvedIds.push(tmdbId);
+    }
+  }
+
+  if (unresolvedIds.length > 0) {
+    const externalResults = await Promise.allSettled(
+      unresolvedIds.map((id) => getTmdbExternalIds(id, apiKey).then((ext) => ({ tmdbId: id, imdbId: ext.imdb_id }))),
+    );
+    for (const result of externalResults) {
+      if (result.status === 'fulfilled' && result.value.imdbId) {
+        tmdbToImdbCache.set(String(result.value.tmdbId), result.value.imdbId);
+      }
+    }
+  }
+
+  // 7. Exclude already-watched films AND watchlist films (reuse watchlistImdbIds from step 1)
+  const excludeImdbIds = new Set([...seedImdbIds, ...watchlistImdbIds]);
+  try {
+    let cursor: string | undefined;
+    let page = 0;
+    do {
+      page++;
+      const watched = await client.getFilms({
+        member: user.letterboxd_id,
+        memberRelationship: 'Watched',
+        perPage: 100,
+        cursor,
+      });
+      for (const film of watched.items) {
+        const imdb = getImdbId(film);
+        if (imdb) excludeImdbIds.add(imdb);
+      }
+      cursor = watched.cursor;
+    } while (cursor && page < 10);
+    logger.debug({ excludeCount: excludeImdbIds.size }, 'Watched films collected for exclusion');
+  } catch {
+    // Non-critical — proceed with partial exclusion
+  }
+
+  // 8. Collect final films (after exclusion), capped at 30 for performance
+  const RECO_LIMIT = 30;
+  const finalFilms: Array<{ imdbId: string; tmdb: { title: string; year?: number; posterPath?: string | null } }> = [];
+  for (const [tmdbId, info] of sorted) {
+    if (finalFilms.length >= RECO_LIMIT) break;
+    const imdbId = tmdbToImdbCache.get(String(tmdbId));
+    if (!imdbId || excludeImdbIds.has(imdbId)) continue;
+    finalFilms.push({ imdbId, tmdb: { title: info.title, year: info.releaseYear, posterPath: info.posterPath } });
+  }
+  logger.info({ finalFilmsCount: finalFilms.length, excludedCount: excludeImdbIds.size }, 'Recommendation pool after exclusion');
+
+  // 9. Fetch Letterboxd community rating for the badge.
+  //    findFilmByImdb handles 404s via Cinemeta+search fallback — necessary for badge coverage.
+  //    Only the LID is used (metadata comes from TMDB, already in memory).
+  //    Batch of 10 concurrent calls.
+  const lbDataMap = new Map<string, { poster?: string; rating?: number }>();
+  const LB_BATCH_SIZE = 10;
+  for (let i = 0; i < finalFilms.length; i += LB_BATCH_SIZE) {
+    const batch = finalFilms.slice(i, i + LB_BATCH_SIZE);
+    await Promise.allSettled(
+      batch.map(async ({ imdbId }) => {
+        const result = await findFilmByImdb(client, imdbId);
+        if (!result) return;
+        const poster = getPosterUrl(result.film);
+        const stats = await client.getFilmStatistics(result.letterboxdFilmId);
+        lbDataMap.set(imdbId, { poster, rating: stats.rating ?? undefined });
+      }),
+    );
+  }
+  logger.info({ withRating: lbDataMap.size, total: finalFilms.length }, 'Letterboxd data fetched for recommendations');
+
+  // Build StremioMeta[] — Letterboxd poster + rating badge, TMDB as fallback for metadata
+  const metas: StremioMeta[] = [];
+  let rank = 0;
+  for (const { imdbId, tmdb } of finalFilms) {
+    rank++;
+    const lb = lbDataMap.get(imdbId);
+    const posterUrl = lb?.poster ?? (tmdb.posterPath ? `https://image.tmdb.org/t/p/w300${tmdb.posterPath}` : undefined);
+    metas.push({
+      id: imdbId,
+      type: 'movie',
+      name: tmdb.title,
+      poster: showRatings ? buildPosterUrl(posterUrl, lb?.rating) : posterUrl,
+      year: tmdb.year,
+      description: `#${rank}`,
+    });
+  }
+
+  // 9. Apply local sort (default: score order from TMDB aggregation)
+  if (sort) {
+    switch (sort) {
+      case 'FilmName':
+        metas.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'ReleaseDateLatestFirst':
+        metas.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+        break;
+      case 'ReleaseDateEarliestFirst':
+        metas.sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
+        break;
+      case 'AverageRatingHighToLow':
+        metas.sort((a, b) => {
+          const ra = lbDataMap.get(a.id)?.rating ?? 0;
+          const rb = lbDataMap.get(b.id)?.rating ?? 0;
+          return rb - ra;
+        });
+        break;
+      case 'AverageRatingLowToHigh':
+        metas.sort((a, b) => {
+          const ra = lbDataMap.get(a.id)?.rating ?? 0;
+          const rb = lbDataMap.get(b.id)?.rating ?? 0;
+          return ra - rb;
+        });
+        break;
+      // default: keep score order
+    }
+    // Re-number ranks after sort
+    for (let i = 0; i < metas.length; i++) {
+      metas[i]!.description = `#${i + 1}`;
+    }
+  }
+
+  // 10. Cache and return
+  recommendationCache.set(cacheKey, { metas });
+  logger.info({ total: metas.length, seeds: tmdbSeeds.length, username: user.letterboxd_username }, 'Recommendations generated');
+  return { metas: metas.slice(skip, skip + CATALOG_PAGE_SIZE) };
+}
+
+/**
  * Fetch liked films for public tier (with app token)
  */
 async function fetchLikedFilmsCatalogPublic(
@@ -498,6 +768,9 @@ async function handleCatalogRequest(
     } else if (catalogId === 'letterboxd-liked-films') {
       trackEvent('catalog_liked', userId);
       result = await fetchLikedFilmsCatalog(user, skip, showRatings, sort);
+    } else if (catalogId === 'letterboxd-recommended') {
+      trackEvent('catalog_recommended', userId);
+      result = await fetchRecommendationsCatalog(user, skip, showRatings, sort);
     } else if (catalogId === 'letterboxd-popular') {
       trackEvent('catalog_popular', userId);
       result = await fetchPopularCatalogPublic(skip, showRatings, sort);
@@ -1118,103 +1391,51 @@ export async function stremioRoutes(app: FastifyInstance) {
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // Meta Route: Enrich Cinemeta with Letterboxd rating badge (Tier 2 only)
+  // Meta Route: Pass-through Cinemeta + Letterboxd poster badge (Tier 2 only)
   // ═══════════════════════════════════════════════════════════════════════════
 
   app.get(
     '/stremio/:userId/meta/movie/:imdbId.json',
     async (
-      request: FastifyRequest<{
-        Params: { userId: string; imdbId: string };
-      }>,
+      request: FastifyRequest<{ Params: { userId: string; imdbId: string } }>,
       reply
     ) => {
       const { userId, imdbId } = request.params;
 
-      // Validate IMDb ID
       if (!IMDB_REGEX.test(imdbId)) {
         return reply.status(400).send({ error: 'Invalid IMDb ID' });
       }
 
       const user = findUserById(userId);
       if (!user) {
-        return reply.status(404).send({ meta: null, error: 'User not found' });
+        return reply.status(404).send({ meta: null });
       }
-
-      logger.info({ imdbId, username: user.letterboxd_username }, 'Meta request with Letterboxd enrichment');
 
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
 
+      // 1. Fetch raw Cinemeta meta (all fields preserved)
+      const rawMeta = await getRawCinemetaMeta(imdbId);
+      if (!rawMeta) {
+        return { meta: null };
+      }
+
+      // 2. Try to replace poster with Letterboxd badge version
       try {
-        // 1. Fetch base data from Cinemeta (with caching)
-        const cinemetaData = await getFullFilmInfoFromCinemeta(imdbId);
-        if (!cinemetaData) {
-          return { meta: null };
-        }
-
-        // 2. Create authenticated client for user
         const client = await createClientForUser(user);
-
-        // 3. Find Letterboxd film by IMDb
         const letterboxdResult = await findFilmByImdb(client, imdbId);
-
-        // 4. If found, get rating and add badge to poster
-        let poster = cinemetaData.poster;
         if (letterboxdResult) {
           const ratingData = await getFilmRatingData(client, letterboxdResult.letterboxdFilmId, user.id);
-
-          if (ratingData.communityRating !== null && poster) {
-            // Replace poster with badge-enabled version
-            poster = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(poster)}&rating=${ratingData.communityRating.toFixed(1)}`;
+          if (ratingData.communityRating !== null && rawMeta.poster) {
+            const badgedPoster = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(rawMeta.poster as string)}&rating=${ratingData.communityRating.toFixed(1)}`;
+            return { meta: { ...rawMeta, poster: badgedPoster } };
           }
         }
-
-        // 5. Build and return enriched meta (only modified fields)
-        const meta = {
-          id: imdbId,
-          type: 'movie',
-          name: cinemetaData.name,
-          poster,
-          background: cinemetaData.background,
-          year: cinemetaData.year,
-          genres: cinemetaData.genres,
-          director: cinemetaData.director,
-          cast: cinemetaData.cast,
-          writer: cinemetaData.writer,
-          runtime: cinemetaData.runtime,
-          description: cinemetaData.description,
-          trailers: cinemetaData.trailers,
-        };
-
-        logger.info({ imdbId, hasRating: !!letterboxdResult }, 'Letterboxd meta enrichment completed');
-        return { meta };
-
-      } catch (error) {
-        logger.error({ error, userId, imdbId }, 'Failed to fetch enriched meta');
-        // Return basic Cinemeta data on error
-        const cinemetaData = await getFullFilmInfoFromCinemeta(imdbId);
-        if (!cinemetaData) {
-          return { meta: null };
-        }
-        return {
-          meta: {
-            id: imdbId,
-            type: 'movie',
-            name: cinemetaData.name,
-            poster: cinemetaData.poster,
-            background: cinemetaData.background,
-            year: cinemetaData.year,
-            genres: cinemetaData.genres,
-            director: cinemetaData.director,
-            cast: cinemetaData.cast,
-            writer: cinemetaData.writer,
-            runtime: cinemetaData.runtime,
-            description: cinemetaData.description,
-            trailers: cinemetaData.trailers,
-          }
-        };
+      } catch {
+        // Non-critical — fall through to raw Cinemeta response
       }
+
+      return { meta: rawMeta };
     }
   );
 

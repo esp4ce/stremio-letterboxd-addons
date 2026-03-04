@@ -55,6 +55,7 @@ export type EventType =
   | 'catalog_liked'
   | 'catalog_popular'
   | 'catalog_top250'
+  | 'catalog_recommended'
   | 'stream'
   | 'action_watched'
   | 'action_liked'

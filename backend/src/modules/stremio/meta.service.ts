@@ -1,6 +1,6 @@
 import { AuthenticatedClient, LetterboxdFilm } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
-import { imdbToLetterboxdCache, cinemetaCache } from '../../lib/cache.js';
+import { imdbToLetterboxdCache, cinemetaCache, cinemetaRawCache } from '../../lib/cache.js';
 import type { CachedRating, CinemetaFilmData } from '../../lib/cache.js';
 import { serverConfig } from '../../config/index.js';
 
@@ -86,6 +86,29 @@ export async function getFullFilmInfoFromCinemeta(imdbId: string): Promise<Cinem
     return cinemetaData;
   } catch (error) {
     logger.error({ error, imdbId }, 'Error fetching from Cinemeta');
+    return null;
+  }
+}
+
+/**
+ * Fetch the raw Cinemeta meta object without filtering fields.
+ * Used for pass-through in the /meta route so no data is lost.
+ */
+export async function getRawCinemetaMeta(imdbId: string): Promise<Record<string, unknown> | null> {
+  const cached = cinemetaRawCache.get(imdbId);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(`https://v3-cinemeta.strem.io/meta/movie/${imdbId}.json`);
+    if (!response.ok) return null;
+
+    const data = await response.json() as { meta?: Record<string, unknown> };
+    if (!data.meta?.name) return null;
+
+    cinemetaRawCache.set(imdbId, data.meta);
+    return data.meta;
+  } catch (error) {
+    logger.error({ error, imdbId }, 'Error fetching raw Cinemeta meta');
     return null;
   }
 }

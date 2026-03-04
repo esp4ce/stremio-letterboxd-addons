@@ -82,6 +82,7 @@ const ALL_BASE_DEFS: BaseCatalogDef[] = [
   { id: "letterboxd-diary", key: "diary", label: "Diary", description: "Your recently watched films" },
   { id: "letterboxd-friends", key: "friends", label: "Friends Activity", description: "What your friends are watching" },
   { id: "letterboxd-liked-films", key: "likedFilms", label: "Liked Films", description: "Films you have liked" },
+  { id: "letterboxd-recommended", key: "recommended", label: "Recommended", description: "Films recommended based on your taste" },
   { id: "letterboxd-popular", key: "popular", label: "Popular This Week", description: "Trending films on Letterboxd" },
   { id: "letterboxd-top250", key: "top250", label: "Top 250 Narrative Features", description: "Official Top 250 by Dave" },
 ];
@@ -289,6 +290,7 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     diary: "letterboxd-diary",
     friends: "letterboxd-friends",
     likedFilms: "letterboxd-liked-films",
+    recommended: "letterboxd-recommended",
     popular: "letterboxd-popular",
     top250: "letterboxd-top250",
   };
@@ -425,7 +427,7 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
 
   // Base defs applicable to this mode
   const applicableBaseDefs = ALL_BASE_DEFS.filter((d) => {
-    if (isPublic && (d.key === "diary" || d.key === "friends")) return false;
+    if (isPublic && (d.key === "diary" || d.key === "friends" || d.key === "recommended")) return false;
     if (isPublic && (d.key === "watchlist" || d.key === "likedFilms") && !hasUsername) return false;
     return true;
   });

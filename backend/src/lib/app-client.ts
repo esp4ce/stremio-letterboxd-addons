@@ -9,7 +9,7 @@ let tokenExpiry = 0;
 export async function getAppToken(): Promise<string> {
   if (appToken && Date.now() < tokenExpiry) return appToken;
 
-  logger.info('Requesting new app token via client_credentials');
+  logger.info('Requesting new app token');
   const response = await authenticateAsApp();
   appToken = response.access_token;
   // Refresh 60s before actual expiry

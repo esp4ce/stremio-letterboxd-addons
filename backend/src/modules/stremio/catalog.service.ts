@@ -1,4 +1,4 @@
-import { WatchlistFilm, LogEntry, ListEntry, LogEntryFilm, ActivityItem } from '../letterboxd/letterboxd.client.js';
+import { WatchlistFilm, LogEntry, ListEntry, ActivityItem } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
 import { imdbToLetterboxdCache } from '../../lib/cache.js';
 import { serverConfig } from '../../config/index.js';
@@ -17,18 +17,34 @@ export interface StremioMeta {
   description?: string;
 }
 
+/** Shape shared by WatchlistFilm and LogEntryFilm */
+interface FilmLike {
+  poster?: { sizes?: Array<{ width: number; url: string }> };
+  links?: Array<{ type: string; id: string }>;
+}
+
 /**
  * Extract IMDb ID from Letterboxd film links
  */
-function getImdbId(film: WatchlistFilm): string | null {
+export function getImdbId(film: FilmLike): string | null {
   const imdbLink = film.links?.find((link) => link.type === 'imdb');
   return imdbLink?.id ?? null;
 }
 
 /**
+ * Extract TMDB ID from Letterboxd film links
+ */
+export function getTmdbId(film: WatchlistFilm): number | null {
+  const tmdbLink = film.links?.find((link) => link.type === 'tmdb');
+  if (!tmdbLink?.id) return null;
+  const parsed = parseInt(tmdbLink.id, 10);
+  return isNaN(parsed) ? null : parsed;
+}
+
+/**
  * Get best poster URL (prefer 300x450 size)
  */
-function getPosterUrl(film: WatchlistFilm): string | undefined {
+export function getPosterUrl(film: FilmLike): string | undefined {
   if (!film.poster?.sizes?.length) return undefined;
 
   // Prefer 300x450 or closest to it
@@ -42,7 +58,7 @@ function getPosterUrl(film: WatchlistFilm): string | undefined {
 /**
  * Build poster URL with rating badge overlay via proxy
  */
-function buildPosterUrl(originalPoster: string | undefined, rating?: number): string | undefined {
+export function buildPosterUrl(originalPoster: string | undefined, rating?: number): string | undefined {
   if (!originalPoster || !rating) return originalPoster;
   return `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(originalPoster)}&rating=${rating.toFixed(1)}`;
 }
@@ -109,30 +125,10 @@ export function transformWatchlistToMetas(films: WatchlistFilm[], showRatings = 
 }
 
 /**
- * Extract IMDb ID from LogEntry film
- */
-function getLogEntryImdbId(film: LogEntryFilm): string | null {
-  const imdbLink = film.links?.find((link) => link.type === 'imdb');
-  return imdbLink?.id ?? null;
-}
-
-/**
- * Get poster URL from LogEntry film
- */
-function getLogEntryPosterUrl(film: LogEntryFilm): string | undefined {
-  if (!film.poster?.sizes?.length) return undefined;
-
-  const preferred = film.poster.sizes.find((s) => s.width === 300);
-  if (preferred) return preferred.url;
-
-  return film.poster.sizes[film.poster.sizes.length - 1]?.url;
-}
-
-/**
  * Transform LogEntry to Stremio Meta
  */
 export function transformLogEntryToMeta(entry: LogEntry, showRatings = true): StremioMeta | null {
-  const imdbId = getLogEntryImdbId(entry.film);
+  const imdbId = getImdbId(entry.film);
 
   if (!imdbId) {
     logger.warn({ filmId: entry.film.id, filmName: entry.film.name }, 'LogEntry film has no IMDb ID, skipping');
@@ -159,7 +155,7 @@ export function transformLogEntryToMeta(entry: LogEntry, showRatings = true): St
     id: imdbId,
     type: 'movie',
     name: entry.film.name,
-    poster: showRatings ? buildPosterUrl(getLogEntryPosterUrl(entry.film), entry.rating) : getLogEntryPosterUrl(entry.film),
+    poster: showRatings ? buildPosterUrl(getPosterUrl(entry.film), entry.rating) : getPosterUrl(entry.film),
     year: entry.film.releaseYear,
     genres: entry.film.genres?.map((g) => g.name),
     director: entry.film.directors?.map((d) => d.name),
@@ -265,8 +261,7 @@ function transformActivityItemToMeta(item: ActivityItem, showRatings = true): St
   let description: string | undefined;
 
   if (item.type === 'FilmRatingActivity' && item.rating) {
-    const stars = '★'.repeat(Math.floor(item.rating)) + (item.rating % 1 >= 0.5 ? '½' : '');
-    description = `Rated ${stars} by ${memberName}`;
+    description = `Rated ${formatStarsOnly(item.rating)} by ${memberName}`;
   } else if (item.type === 'WatchlistActivity') {
     description = `Added to watchlist by ${memberName}`;
   } else if (item.type === 'DiaryEntryActivity') {
@@ -274,8 +269,7 @@ function transformActivityItemToMeta(item: ActivityItem, showRatings = true): St
     const parts: string[] = [];
     if (diary?.like) parts.push('Liked');
     if (diary?.rating) {
-      const stars = '★'.repeat(Math.floor(diary.rating)) + (diary.rating % 1 >= 0.5 ? '½' : '');
-      parts.push(`Rated ${stars}`);
+      parts.push(`Rated ${formatStarsOnly(diary.rating)}`);
     }
     parts.push(`by ${memberName}`);
     if (diary?.diaryDetails?.diaryDate) parts.push(`on ${diary.diaryDetails.diaryDate}`);

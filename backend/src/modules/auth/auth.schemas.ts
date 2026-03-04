@@ -15,6 +15,7 @@ export const userPreferencesSchema = z.object({
     popular: z.boolean().default(false),
     top250: z.boolean().default(true),
     likedFilms: z.boolean().default(false),
+    recommended: z.boolean().default(true),
   }),
   ownLists: z.array(z.string()),
   externalLists: z.array(

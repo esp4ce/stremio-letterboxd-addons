@@ -6,6 +6,7 @@ export interface UserPreferences {
     popular: boolean;
     top250: boolean;
     likedFilms: boolean;
+    recommended: boolean;
   };
   ownLists: string[];
   externalLists: Array<{

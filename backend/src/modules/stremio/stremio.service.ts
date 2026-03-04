@@ -1,4 +1,4 @@
-import { config } from '../../config/index.js';
+import { config, tmdbConfig } from '../../config/index.js';
 import type { UserList } from '../letterboxd/letterboxd.client.js';
 import type { UserPreferences } from '../../db/repositories/user.repository.js';
 import type { PublicConfig } from '../../lib/config-encoding.js';
@@ -48,9 +48,6 @@ export interface StremioCatalog {
   }>;
 }
 
-// Keep the old interface name for backwards compatibility
-export type StemioCatalog = StremioCatalog;
-
 export const SORT_EXTRA_OPTIONS = [
   "Recently Added", "Oldest Added", "Film Name",
   "Release Date (Newest)", "Release Date (Oldest)",
@@ -85,6 +82,14 @@ export const SORT_LABEL_TO_API: Record<string, string> = {
 const SORT_EXTRA = { name: 'genre', options: SORT_EXTRA_OPTIONS, isRequired: false, optionsLimit: 1 };
 const PUBLIC_SORT_EXTRA = { name: 'genre', options: PUBLIC_SORT_EXTRA_OPTIONS, isRequired: false, optionsLimit: 1 };
 
+const RECO_SORT_OPTIONS = [
+  "Film Name",
+  "Release Date (Newest)", "Release Date (Oldest)",
+  "Average Rating (High)", "Average Rating (Low)",
+  "Shuffle",
+];
+export const RECO_SORT_EXTRA = { name: 'genre', options: RECO_SORT_OPTIONS, isRequired: false, optionsLimit: 1 };
+
 /**
  * Generate base catalogs for a user
  */
@@ -114,6 +119,16 @@ function getBaseCatalogs(displayName: string): StremioCatalog[] {
       name: `${displayName}'s Liked Films`,
       extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
     },
+    ...(tmdbConfig.apiKey
+      ? [
+          {
+            type: 'movie' as const,
+            id: 'letterboxd-recommended',
+            name: `Recommended for ${displayName}`,
+            extra: [RECO_SORT_EXTRA, { name: 'skip', isRequired: false }],
+          },
+        ]
+      : []),
     {
       type: 'movie',
       id: 'letterboxd-popular',
@@ -134,6 +149,7 @@ const catalogIdMap: Record<string, keyof UserPreferences['catalogs']> = {
   'letterboxd-diary': 'diary',
   'letterboxd-friends': 'friends',
   'letterboxd-liked-films': 'likedFilms',
+  'letterboxd-recommended': 'recommended',
   'letterboxd-popular': 'popular',
   'letterboxd-top250': 'top250',
 };
@@ -157,7 +173,7 @@ function listsToStremioCatalogs(lists: UserList[]): StremioCatalog[] {
 export function generateBaseManifest(): StremioManifest {
   return {
     id: 'community.stremboxd',
-    version: '1.0.2',
+    version: '1.0.3',
     name: 'Stremboxd',
     description: 'Letterboxd catalogs for Stremio: popular films, top 250, watchlists, and custom lists. Configure at https://stremboxd.com',
     logo: `${config.PUBLIC_URL}/logo.svg`,
@@ -280,7 +296,7 @@ export function generatePublicManifest(
 
   return {
     id: 'community.stremboxd',
-    version: '1.0.2',
+    version: '1.0.3',
     name: `Stremboxd${namePart}`,
     description: 'Letterboxd catalogs for Stremio. Configure at https://stremboxd.com',
     logo: `${config.PUBLIC_URL}/logo.svg`,
@@ -306,7 +322,7 @@ export function generateManifest(user: {
 
   return {
     id: 'community.stremboxd',
-    version: '1.0.2',
+    version: '1.0.3',
     name: `Letterboxd for ${displayName}`,
     description: `Your personal Letterboxd ratings and watchlist synced to Stremio. Connected as ${user.username}.`,
     logo: `${config.PUBLIC_URL}/logo.svg`,
@@ -410,7 +426,7 @@ export function generateDynamicManifest(
 
   return {
     id: 'community.stremboxd',
-    version: '1.0.2',
+    version: '1.0.3',
     name: `Letterboxd for ${displayName}`,
     description: `Your personal Letterboxd ratings and watchlist synced to Stremio. Connected as ${user.username}.`,
     logo: `${config.PUBLIC_URL}/logo.svg`,

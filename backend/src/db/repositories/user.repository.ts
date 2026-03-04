@@ -2,7 +2,7 @@ import { getDb } from '../index.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
 
 export interface UserPreferences {
-  catalogs: { watchlist: boolean; diary: boolean; friends: boolean; popular: boolean; top250: boolean; likedFilms: boolean };
+  catalogs: { watchlist: boolean; diary: boolean; friends: boolean; popular: boolean; top250: boolean; likedFilms: boolean; recommended: boolean };
   ownLists: string[];
   externalLists: Array<{
     id: string;

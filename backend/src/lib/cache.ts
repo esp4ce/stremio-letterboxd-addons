@@ -72,6 +72,11 @@ export const cinemetaCache = createCache<CinemetaFilmData>({
   ttl: 60 * 60 * 1000, // 1 hour
 });
 
+// Raw Cinemeta meta cache — stores the full unfiltered meta object for pass-through
+export const cinemetaRawCache = createCache<Record<string, unknown>>({
+  ttl: 60 * 60 * 1000, // 1 hour
+});
+
 // ── Public catalog caches ────────────────────────────────────────────────────
 
 import type { StremioMeta } from '../modules/stremio/catalog.service.js';
@@ -131,6 +136,18 @@ export const userClientCache = createCache<{ client: AuthenticatedClient; expire
 export const userCatalogCache = createCache<{ metas: StremioMeta[] }>({
   maxSize: 500,
   ttl: 2 * 60 * 1000, // 2min — compromise between freshness and API savings
+});
+
+// Recommendations cache (expensive to compute, stable results)
+export const recommendationCache = createCache<{ metas: StremioMeta[] }>({
+  maxSize: 200,
+  ttl: 6 * 60 * 60 * 1000, // 6h
+});
+
+// TMDB ID → IMDb ID mapping (never changes)
+export const tmdbToImdbCache = createCache<string>({
+  maxSize: 10_000,
+  ttl: 7 * 24 * 60 * 60 * 1000, // 7 days
 });
 
 // Track cache keys per user for efficient invalidation (LRU doesn't support prefix scan)
@@ -239,5 +256,7 @@ export function getCacheStats(): CacheStats {
     poster: { size: posterCache.size, max: posterCache.max },
     userClient: { size: userClientCache.size, max: userClientCache.max },
     userCatalog: { size: userCatalogCache.size, max: userCatalogCache.max },
+    recommendation: { size: recommendationCache.size, max: recommendationCache.max },
+    tmdbToImdb: { size: tmdbToImdbCache.size, max: tmdbToImdbCache.max },
   };
 }
