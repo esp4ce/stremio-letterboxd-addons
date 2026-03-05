@@ -18,6 +18,7 @@ export interface UserPreferences {
   externalWatchlists?: Array<{ username: string; displayName: string }>;
   showActions?: boolean;
   showRatings?: boolean;
+  showReviews?: boolean;
   catalogNames?: Record<string, string>;
   catalogOrder?: string[];
 }

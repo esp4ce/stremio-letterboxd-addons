@@ -635,32 +635,25 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
             <div className="mt-7">
               <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-400">Display Options</h3>
               <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between rounded-lg bg-zinc-800/35 px-3.5 py-3">
-                  <div>
-                    <p className="text-[13px] font-medium text-white">Poster Ratings</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">Show Letterboxd ratings on poster images</p>
+                {([
+                  { key: "showRatings" as const, label: "Poster Ratings", description: "Show Letterboxd ratings on poster images" },
+                  { key: "showActions" as const, label: "Letterboxd Actions", description: "Show rate, watched, liked and watchlist buttons in Stremio" },
+                  { key: "showReviews" as const, label: "Popular Reviews", description: "Show popular Letterboxd reviews on film pages" },
+                ] as const).map(({ key, label, description }) => (
+                  <div key={key} className="flex items-center justify-between rounded-lg bg-zinc-800/35 px-3.5 py-3">
+                    <div>
+                      <p className="text-[13px] font-medium text-white">{label}</p>
+                      <p className="mt-0.5 text-[11px] text-zinc-500">{description}</p>
+                    </div>
+                    <Toggle
+                      enabled={(props as FullModeProps).preferences[key] !== false}
+                      onToggle={() => {
+                        const p = props as FullModeProps;
+                        p.onPreferencesChange({ ...p.preferences, [key]: p.preferences[key] === false });
+                      }}
+                    />
                   </div>
-                  <Toggle
-                    enabled={(props as FullModeProps).preferences.showRatings !== false}
-                    onToggle={() => {
-                      const p = props as FullModeProps;
-                      p.onPreferencesChange({ ...p.preferences, showRatings: p.preferences.showRatings === false });
-                    }}
-                  />
-                </div>
-                <div className="flex items-center justify-between rounded-lg bg-zinc-800/35 px-3.5 py-3">
-                  <div>
-                    <p className="text-[13px] font-medium text-white">Letterboxd Actions</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">Show rate, watched, liked and watchlist buttons in Stremio</p>
-                  </div>
-                  <Toggle
-                    enabled={(props as FullModeProps).preferences.showActions !== false}
-                    onToggle={() => {
-                      const p = props as FullModeProps;
-                      p.onPreferencesChange({ ...p.preferences, showActions: p.preferences.showActions === false });
-                    }}
-                  />
-                </div>
+                ))}
               </div>
             </div>
           )}

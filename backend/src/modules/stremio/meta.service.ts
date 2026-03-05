@@ -1,6 +1,6 @@
 import { AuthenticatedClient, LetterboxdFilm } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
-import { imdbToLetterboxdCache, cinemetaCache, cinemetaRawCache } from '../../lib/cache.js';
+import { imdbToLetterboxdCache, cinemetaCache, cinemetaRawCache, filmReviewsCache } from '../../lib/cache.js';
 import type { CachedRating, CinemetaFilmData } from '../../lib/cache.js';
 import { serverConfig } from '../../config/index.js';
 
@@ -233,7 +233,6 @@ export async function findFilmByImdb(
 export async function getFilmRatingData(
   client: AuthenticatedClient,
   letterboxdFilmId: string,
-  userId: string
 ): Promise<CachedRating> {
   // Always fetch fresh user relationship data so meta page reflects current state
   // (watched/liked/watchlist/rating must be up-to-date when user opens a film)
@@ -329,7 +328,7 @@ export async function buildLetterboxdStreams(
   }
 
   const { letterboxdFilmId, film } = result;
-  const rating = await getFilmRatingData(client, letterboxdFilmId, userId);
+  const rating = await getFilmRatingData(client, letterboxdFilmId);
   const baseUrl = serverConfig.publicUrl;
   const letterboxdLink = film.links?.find(l => l.type === 'letterboxd');
   const letterboxdUrl = letterboxdLink?.url ?? `https://letterboxd.com/film/${film.id}/`;
@@ -409,4 +408,51 @@ export async function buildLetterboxdStreams(
 
   logger.info({ imdbId, streamCount: streams.length }, 'Built Letterboxd streams');
   return streams;
+}
+
+// ============================================================================
+// Popular Reviews
+// ============================================================================
+
+/**
+ * Fetch popular reviews for a film and format them for the meta description.
+ * Returns a formatted string with up to 2 non-spoiler reviews, or null if none.
+ */
+export async function getPopularReviewsText(
+  client: AuthenticatedClient,
+  letterboxdFilmId: string,
+): Promise<string | null> {
+  const cached = filmReviewsCache.get(letterboxdFilmId);
+  if (cached) return cached;
+
+  try {
+    const response = await client.getFilmReviews(letterboxdFilmId, {
+      perPage: 10,
+      sort: 'ReviewPopularity',
+    });
+
+    const reviews = response.items
+      .filter(r => r.review && !r.review.containsSpoilers && r.review.text
+        && (!r.review.languageCode || r.review.languageCode === 'en'))
+      .slice(0, 2);
+
+    if (reviews.length === 0) return null;
+
+    const lines = reviews.map(r => {
+      // Strip HTML tags from review text
+      let text = r.review!.text!.replace(/<[^>]+>/g, '').replace(/\n+/g, ' ').trim();
+      if (text.length > 150) text = text.slice(0, 147) + '...';
+      const stars = r.rating ? ' ' + formatStars(r.rating, false) : '';
+      const author = r.owner.displayName || r.owner.username;
+      return `"${text}" — ${author}${stars}`;
+    });
+
+    const result = lines.join('\n\n');
+    filmReviewsCache.set(letterboxdFilmId, result);
+    logger.debug({ letterboxdFilmId, count: reviews.length }, 'Popular reviews cached');
+    return result;
+  } catch (error) {
+    logger.debug({ error, letterboxdFilmId }, 'Failed to fetch film reviews');
+    return null;
+  }
 }

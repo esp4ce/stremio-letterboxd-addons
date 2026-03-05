@@ -37,7 +37,7 @@ import {
   buildPosterUrl,
   StremioMeta,
 } from './catalog.service.js';
-import { buildLetterboxdStreams, findFilmByImdb, getRawCinemetaMeta, getFilmRatingData } from './meta.service.js';
+import { buildLetterboxdStreams, findFilmByImdb, getRawCinemetaMeta, getFilmRatingData, getPopularReviewsText } from './meta.service.js';
 import { generateRatedPoster } from './poster.service.js';
 import { createChildLogger } from '../../lib/logger.js';
 import {
@@ -56,6 +56,8 @@ import {
   cacheMetrics,
   recommendationCache,
   tmdbToImdbCache,
+  userCatalogCache,
+  watchedImdbCache,
 } from '../../lib/cache.js';
 import { trackEvent, type EventType } from '../../lib/metrics.js';
 import { generateAnonId } from '../../lib/anonymous-id.js';
@@ -146,13 +148,14 @@ function parseExtra(extra?: string): Record<string, string> {
   return params;
 }
 
-function parseSortAndSkip(extra?: string): { skip: number; sort?: string; isShuffle: boolean } {
+function parseSortAndSkip(extra?: string): { skip: number; sort?: string; isShuffle: boolean; isNotWatched: boolean } {
   const params = parseExtra(extra);
   const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
   const sortLabel = params['genre'];
   const isShuffle = sortLabel === 'Shuffle';
-  const sort = sortLabel && !isShuffle ? SORT_LABEL_TO_API[sortLabel] : undefined;
-  return { skip, sort, isShuffle };
+  const isNotWatched = sortLabel === 'Not Watched';
+  const sort = sortLabel && !isShuffle && !isNotWatched ? SORT_LABEL_TO_API[sortLabel] : undefined;
+  return { skip, sort, isShuffle, isNotWatched };
 }
 
 /**
@@ -205,6 +208,102 @@ async function createClientForUser(user: User): Promise<AuthenticatedClient> {
 }
 
 /**
+ * Get the set of IMDb IDs the user has watched (cached 5 min)
+ */
+async function getWatchedImdbIds(user: User): Promise<Set<string>> {
+  const cached = watchedImdbCache.get(user.id);
+  if (cached) return cached.ids;
+
+  const client = await createClientForUser(user);
+  const ids = new Set<string>();
+  let cursor: string | undefined;
+  let page = 0;
+
+  do {
+    page++;
+    const watched = await client.getFilms({
+      member: user.letterboxd_id,
+      memberRelationship: 'Watched',
+      perPage: 100,
+      cursor,
+    });
+    for (const film of watched.items) {
+      const imdb = getImdbId(film);
+      if (imdb) ids.add(imdb);
+    }
+    cursor = watched.cursor;
+  } while (cursor && page < 10);
+
+  watchedImdbCache.set(user.id, { ids });
+  logger.debug({ userId: user.id, count: ids.size }, 'Watched IMDb IDs cached');
+  return ids;
+}
+
+// ── Cache key builders (single source of truth) ─────────────────────────────
+
+function cacheKeyWatchlist(userId: string, showRatings: boolean, sort?: string) {
+  return `user:${userId}:watchlist:${showRatings}:${sort || 'default'}`;
+}
+function cacheKeyDiary(userId: string, showRatings: boolean, sort?: string) {
+  return `user:${userId}:diary:${showRatings}:${sort || 'default'}`;
+}
+function cacheKeyFriends(userId: string, showRatings: boolean) {
+  return `user:${userId}:friends:${showRatings}`;
+}
+function cacheKeyLiked(userId: string, showRatings: boolean, sort?: string) {
+  return `user:${userId}:liked:${showRatings}:${sort || 'default'}`;
+}
+function cacheKeyList(userId: string, listId: string, showRatings: boolean, sort?: string) {
+  return `user:${userId}:list:${listId}:${showRatings}:${sort || 'default'}`;
+}
+function cacheKeyReco(userId: string, sort?: string) {
+  return `reco:${userId}:${sort ?? 'default'}`;
+}
+function cacheKeyPopular(showRatings: boolean, sort?: string) {
+  return `popular:${showRatings}:${sort || 'FilmPopularityThisWeek'}`;
+}
+function cacheKeyTop250(showRatings: boolean, sort?: string) {
+  return `top250:${showRatings}:${sort || 'default'}`;
+}
+function cacheKeyPublicWatchlist(memberId: string, showRatings: boolean, sort?: string) {
+  return `watchlist:${memberId}:${showRatings}:${sort || 'default'}`;
+}
+
+/**
+ * Read the full (unpaginated) catalog from the appropriate cache.
+ * Returns undefined if not found — caller should fall back to paginated result.
+ */
+function getFullCatalogFromCache(
+  catalogId: string,
+  userId: string,
+  showRatings: boolean,
+  sort?: string,
+  extMemberId?: string,
+): StremioMeta[] | undefined {
+  if (catalogId === 'letterboxd-watchlist')
+    return userCatalogCache.get(cacheKeyWatchlist(userId, showRatings, sort))?.metas;
+  if (catalogId === 'letterboxd-diary')
+    return userCatalogCache.get(cacheKeyDiary(userId, showRatings, sort))?.metas;
+  if (catalogId === 'letterboxd-friends')
+    return userCatalogCache.get(cacheKeyFriends(userId, showRatings))?.metas;
+  if (catalogId === 'letterboxd-liked-films')
+    return userCatalogCache.get(cacheKeyLiked(userId, showRatings, sort))?.metas;
+  if (catalogId === 'letterboxd-recommended')
+    return recommendationCache.get(cacheKeyReco(userId, sort))?.metas;
+  if (catalogId === 'letterboxd-popular')
+    return popularCatalogCache.get(cacheKeyPopular(showRatings, sort))?.metas;
+  if (catalogId === 'letterboxd-top250')
+    return top250CatalogCache.get(cacheKeyTop250(showRatings, sort))?.metas;
+  if (catalogId.startsWith('letterboxd-watchlist-') && extMemberId)
+    return publicWatchlistCache.get(cacheKeyPublicWatchlist(extMemberId, showRatings, sort))?.metas;
+  if (catalogId.startsWith('letterboxd-list-')) {
+    const listId = catalogId.replace('letterboxd-list-', '');
+    return userCatalogCache.get(cacheKeyList(userId, listId, showRatings, sort))?.metas;
+  }
+  return undefined;
+}
+
+/**
  * Fetch watchlist and return Stremio metas with pagination
  */
 async function fetchWatchlistCatalog(
@@ -213,7 +312,7 @@ async function fetchWatchlistCatalog(
   showRatings: boolean = true,
   sort?: string
 ): Promise<{ metas: StremioMeta[] }> {
-  const cacheKey = `user:${user.id}:watchlist:${showRatings}:${sort || 'default'}`;
+  const cacheKey = cacheKeyWatchlist(user.id, showRatings, sort);
   const cached = getUserCatalogCached(cacheKey, skip, CATALOG_PAGE_SIZE);
   if (cached) return cached;
 
@@ -248,7 +347,7 @@ async function fetchDiaryCatalog(
   showRatings: boolean = true,
   sort?: string
 ): Promise<{ metas: StremioMeta[] }> {
-  const cacheKey = `user:${user.id}:diary:${showRatings}:${sort || 'default'}`;
+  const cacheKey = cacheKeyDiary(user.id, showRatings, sort);
   const cached = getUserCatalogCached(cacheKey, skip, CATALOG_PAGE_SIZE);
   if (cached) return cached;
 
@@ -281,7 +380,7 @@ async function fetchFriendsCatalog(
   skip: number = 0,
   showRatings: boolean = true
 ): Promise<{ metas: StremioMeta[] }> {
-  const cacheKey = `user:${user.id}:friends:${showRatings}`;
+  const cacheKey = cacheKeyFriends(user.id, showRatings);
   const cached = getUserCatalogCached(cacheKey, skip, CATALOG_PAGE_SIZE);
   if (cached) return cached;
 
@@ -316,7 +415,7 @@ async function fetchListCatalog(
   showRatings: boolean = true,
   sort?: string
 ): Promise<{ metas: StremioMeta[] }> {
-  const cacheKey = `user:${user.id}:list:${listId}:${showRatings}:${sort || 'default'}`;
+  const cacheKey = cacheKeyList(user.id, listId, showRatings, sort);
   const cached = getUserCatalogCached(cacheKey, skip, CATALOG_PAGE_SIZE);
   if (cached) return cached;
 
@@ -352,7 +451,7 @@ async function fetchLikedFilmsCatalog(
   showRatings: boolean = true,
   sort?: string
 ): Promise<{ metas: StremioMeta[] }> {
-  const cacheKey = `user:${user.id}:liked:${showRatings}:${sort || 'default'}`;
+  const cacheKey = cacheKeyLiked(user.id, showRatings, sort);
   const cached = getUserCatalogCached(cacheKey, skip, CATALOG_PAGE_SIZE);
   if (cached) return cached;
 
@@ -397,7 +496,7 @@ async function fetchRecommendationsCatalog(
   const apiKey = tmdbConfig.apiKey;
   if (!apiKey) return { metas: [] };
 
-  const cacheKey = `reco:${user.id}:${sort ?? 'default'}`;
+  const cacheKey = cacheKeyReco(user.id, sort);
   const cached = recommendationCache.get(cacheKey);
   if (cached) {
     return { metas: cached.metas.slice(skip, skip + CATALOG_PAGE_SIZE) };
@@ -749,41 +848,44 @@ async function handleCatalogRequest(
     return { metas: [] };
   }
 
-  const { skip, sort, isShuffle } = parseSortAndSkip(extra);
+  const { skip, sort, isShuffle, isNotWatched } = parseSortAndSkip(extra);
   const preferences = getUserPreferences(user);
   const showRatings = preferences?.showRatings !== false;
+  // When filtering by "Not Watched", fetch from position 0 so the full catalog is cached
+  const fetchSkip = isNotWatched ? 0 : skip;
 
   try {
     let result: { metas: StremioMeta[] };
+    let resolvedExtMemberId: string | undefined;
 
     if (catalogId === 'letterboxd-watchlist') {
       trackEvent('catalog_watchlist', userId);
-      result = await fetchWatchlistCatalog(user, skip, showRatings, sort);
+      result = await fetchWatchlistCatalog(user, fetchSkip, showRatings, sort);
     } else if (catalogId === 'letterboxd-diary') {
       trackEvent('catalog_diary', userId);
-      result = await fetchDiaryCatalog(user, skip, showRatings, sort);
+      result = await fetchDiaryCatalog(user, fetchSkip, showRatings, sort);
     } else if (catalogId === 'letterboxd-friends') {
       trackEvent('catalog_friends', userId);
-      result = await fetchFriendsCatalog(user, skip, showRatings);
+      result = await fetchFriendsCatalog(user, fetchSkip, showRatings);
     } else if (catalogId === 'letterboxd-liked-films') {
       trackEvent('catalog_liked', userId);
-      result = await fetchLikedFilmsCatalog(user, skip, showRatings, sort);
+      result = await fetchLikedFilmsCatalog(user, fetchSkip, showRatings, sort);
     } else if (catalogId === 'letterboxd-recommended') {
       trackEvent('catalog_recommended', userId);
-      result = await fetchRecommendationsCatalog(user, skip, showRatings, sort);
+      result = await fetchRecommendationsCatalog(user, fetchSkip, showRatings, sort);
     } else if (catalogId === 'letterboxd-popular') {
       trackEvent('catalog_popular', userId);
-      result = await fetchPopularCatalogPublic(skip, showRatings, sort);
+      result = await fetchPopularCatalogPublic(fetchSkip, showRatings, sort);
     } else if (catalogId === 'letterboxd-top250') {
       trackEvent('catalog_top250', userId);
-      result = await fetchTop250CatalogPublic(skip, showRatings, sort);
+      result = await fetchTop250CatalogPublic(fetchSkip, showRatings, sort);
     } else if (catalogId.startsWith('letterboxd-watchlist-')) {
       // External watchlist: letterboxd-watchlist-{username}
       const username = catalogId.replace('letterboxd-watchlist-', '');
       trackEvent('catalog_watchlist', userId, { externalUsername: username });
-      const extMemberId = await resolveMemberId(username);
-      if (extMemberId) {
-        result = await fetchWatchlistCatalogPublic(extMemberId, skip, showRatings, sort);
+      resolvedExtMemberId = await resolveMemberId(username) ?? undefined;
+      if (resolvedExtMemberId) {
+        result = await fetchWatchlistCatalogPublic(resolvedExtMemberId, fetchSkip, showRatings, sort);
       } else {
         result = { metas: [] };
       }
@@ -791,10 +893,21 @@ async function handleCatalogRequest(
       const listId = catalogId.replace('letterboxd-list-', '');
       const listName = listNameCache.get(listId);
       trackEvent('catalog_list', userId, { listId, ...(listName && { listName }) });
-      result = await fetchListCatalog(user, listId, skip, showRatings, sort);
+      result = await fetchListCatalog(user, listId, fetchSkip, showRatings, sort);
     } else {
       logger.warn({ catalogId }, 'Unknown catalog requested');
       return { metas: [] };
+    }
+
+    // "Not Watched" filter: get full catalog, remove watched films, re-paginate
+    if (isNotWatched) {
+      const fullMetas = getFullCatalogFromCache(catalogId, user.id, showRatings, sort, resolvedExtMemberId);
+      if (fullMetas) {
+        const watchedIds = await getWatchedImdbIds(user);
+        const filtered = fullMetas.filter(m => !watchedIds.has(m.id));
+        logger.info({ catalogId, total: fullMetas.length, filtered: filtered.length, watched: watchedIds.size }, 'Not Watched filter applied');
+        result = { metas: filtered.slice(skip, skip + CATALOG_PAGE_SIZE) };
+      }
     }
 
     if (isShuffle) {
@@ -815,7 +928,7 @@ async function handleCatalogRequest(
 
 async function fetchPopularCatalogPublic(skip: number, showRatings: boolean, sort?: string): Promise<{ metas: StremioMeta[] }> {
   const effectiveSort = sort || 'FilmPopularityThisWeek';
-  const cacheKey = `popular:${showRatings}:${effectiveSort}`;
+  const cacheKey = cacheKeyPopular(showRatings, sort);
   const cached = popularCatalogCache.get(cacheKey);
   if (cached) {
     const metas = cached.metas.slice(skip, skip + CATALOG_PAGE_SIZE);
@@ -845,7 +958,7 @@ async function fetchPopularCatalogPublic(skip: number, showRatings: boolean, sor
 }
 
 async function fetchTop250CatalogPublic(skip: number, showRatings: boolean, sort?: string): Promise<{ metas: StremioMeta[] }> {
-  const cacheKey = `top250:${showRatings}:${sort || 'default'}`;
+  const cacheKey = cacheKeyTop250(showRatings, sort);
   const cached = top250CatalogCache.get(cacheKey);
   if (cached) {
     const metas = cached.metas.slice(skip, skip + CATALOG_PAGE_SIZE);
@@ -895,7 +1008,7 @@ async function fetchWatchlistCatalogPublic(
   showRatings: boolean,
   sort?: string
 ): Promise<{ metas: StremioMeta[] }> {
-  const cacheKey = `watchlist:${memberId}:${showRatings}:${sort || 'default'}`;
+  const cacheKey = cacheKeyPublicWatchlist(memberId, showRatings, sort);
   const cached = publicWatchlistCache.get(cacheKey);
   if (cached) {
     const metas = cached.metas.slice(skip, skip + CATALOG_PAGE_SIZE);
@@ -1420,22 +1533,50 @@ export async function stremioRoutes(app: FastifyInstance) {
         return { meta: null };
       }
 
-      // 2. Try to replace poster with Letterboxd badge version
+      // 2. Try to enhance with Letterboxd poster badge + popular reviews
+      const meta: Record<string, unknown> = { ...rawMeta };
       try {
         const client = await createClientForUser(user);
         const letterboxdResult = await findFilmByImdb(client, imdbId);
         if (letterboxdResult) {
-          const ratingData = await getFilmRatingData(client, letterboxdResult.letterboxdFilmId, user.id);
-          if (ratingData.communityRating !== null && rawMeta['poster']) {
-            const badgedPoster = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(rawMeta['poster'] as string)}&rating=${ratingData.communityRating.toFixed(1)}`;
-            return { meta: { ...rawMeta, poster: badgedPoster } };
+          const { letterboxdFilmId } = letterboxdResult;
+
+          // Poster badge (non-critical)
+          try {
+            const ratingData = await getFilmRatingData(client, letterboxdFilmId);
+            if (ratingData.communityRating !== null && rawMeta['poster']) {
+              meta['poster'] = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(rawMeta['poster'] as string)}&rating=${ratingData.communityRating.toFixed(1)}`;
+            }
+          } catch {
+            // Rating lookup failed — skip badge
+          }
+
+          // Popular reviews as a distinct links section (appears before Summary in Stremio)
+          const metaPreferences = getUserPreferences(user);
+          const showReviews = metaPreferences?.showReviews !== false;
+          if (showReviews) {
+            try {
+              const reviewsText = await getPopularReviewsText(client, letterboxdFilmId);
+              if (reviewsText) {
+                const existingLinks = (meta['links'] as Array<{ name: string; category: string; url: string }>) || [];
+                const letterboxdUrl = `https://letterboxd.com/film/${letterboxdFilmId}/reviews/`;
+                const reviewLinks = reviewsText.split('\n\n').map(line => ({
+                  name: line,
+                  category: 'Letterboxd Popular Reviews',
+                  url: letterboxdUrl,
+                }));
+                meta['links'] = [...existingLinks, ...reviewLinks];
+              }
+            } catch {
+              // Reviews fetch failed — skip
+            }
           }
         }
       } catch {
         // Non-critical — fall through to raw Cinemeta response
       }
 
-      return { meta: rawMeta };
+      return { meta };
     }
   );
 

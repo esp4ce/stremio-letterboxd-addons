@@ -138,6 +138,18 @@ export const userCatalogCache = createCache<{ metas: StremioMeta[] }>({
   ttl: 2 * 60 * 1000, // 2min — compromise between freshness and API savings
 });
 
+// Watched IMDb IDs per user (for "Not Watched" filter)
+export const watchedImdbCache = createCache<{ ids: Set<string> }>({
+  maxSize: 200,
+  ttl: 5 * 60 * 1000, // 5 minutes
+});
+
+// Film reviews formatted text cache
+export const filmReviewsCache = createCache<string>({
+  maxSize: 500,
+  ttl: 60 * 60 * 1000, // 1 hour
+});
+
 // Recommendations cache (expensive to compute, stable results)
 export const recommendationCache = createCache<{ metas: StremioMeta[] }>({
   maxSize: 200,
@@ -256,6 +268,8 @@ export function getCacheStats(): CacheStats {
     poster: { size: posterCache.size, max: posterCache.max },
     userClient: { size: userClientCache.size, max: userClientCache.max },
     userCatalog: { size: userCatalogCache.size, max: userCatalogCache.max },
+    watchedImdb: { size: watchedImdbCache.size, max: watchedImdbCache.max },
+    filmReviews: { size: filmReviewsCache.size, max: filmReviewsCache.max },
     recommendation: { size: recommendationCache.size, max: recommendationCache.max },
     tmdbToImdb: { size: tmdbToImdbCache.size, max: tmdbToImdbCache.max },
   };

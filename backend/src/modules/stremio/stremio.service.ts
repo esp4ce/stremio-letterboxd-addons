@@ -56,10 +56,11 @@ export const SORT_EXTRA_OPTIONS = [
   "Popularity", "Popularity (Week)", "Popularity (Month)",
   "Shortest", "Longest",
   "Shuffle",
+  "Not Watched",
 ];
 
 export const PUBLIC_SORT_EXTRA_OPTIONS = SORT_EXTRA_OPTIONS.filter(
-  (o) => o !== "Your Rating (High)" && o !== "Your Rating (Low)"
+  (o) => o !== "Your Rating (High)" && o !== "Your Rating (Low)" && o !== "Not Watched"
 );
 
 export const SORT_LABEL_TO_API: Record<string, string> = {
@@ -87,6 +88,7 @@ const RECO_SORT_OPTIONS = [
   "Release Date (Newest)", "Release Date (Oldest)",
   "Average Rating (High)", "Average Rating (Low)",
   "Shuffle",
+  "Not Watched",
 ];
 export const RECO_SORT_EXTRA = { name: 'genre', options: RECO_SORT_OPTIONS, isRequired: false, optionsLimit: 1 };
 
