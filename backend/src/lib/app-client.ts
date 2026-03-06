@@ -1,5 +1,6 @@
 import { authenticateAsApp, LetterboxdApiError } from '../modules/letterboxd/letterboxd.client.js';
 import { createChildLogger } from './logger.js';
+import { throttled } from './retry.js';
 
 const logger = createChildLogger('app-client');
 
@@ -23,13 +24,13 @@ export async function callWithAppToken<T>(
 ): Promise<T> {
   const token = await getAppToken();
   try {
-    return await fn(token);
+    return await throttled(() => fn(token));
   } catch (err) {
     if (err instanceof LetterboxdApiError && err.status === 401) {
       logger.info('App token expired (401), refreshing');
       appToken = null;
       const newToken = await getAppToken();
-      return fn(newToken);
+      return throttled(() => fn(newToken));
     }
     throw err;
   }

@@ -62,6 +62,7 @@ import {
 import { trackEvent, type EventType } from '../../lib/metrics.js';
 import { generateAnonId } from '../../lib/anonymous-id.js';
 import { callWithAppToken } from '../../lib/app-client.js';
+import { throttled } from '../../lib/retry.js';
 import { decodeConfig, type PublicConfig } from '../../lib/config-encoding.js';
 import { serverConfig, tmdbConfig } from '../../config/index.js';
 import { getTmdbRecommendations, getTmdbExternalIds } from '../../lib/tmdb-client.js';
@@ -204,7 +205,13 @@ async function createClientForUser(user: User): Promise<AuthenticatedClient> {
   userClientCache.set(user.id, { client, expiresAt });
   logger.debug({ userId: user.id }, 'Token cache miss — refreshed');
 
-  return client;
+  return new Proxy(client, {
+    get(target, prop) {
+      const val = target[prop as keyof AuthenticatedClient];
+      if (typeof val !== 'function') return val;
+      return (...args: unknown[]) => throttled(() => (val as (...a: unknown[]) => Promise<unknown>).apply(target, args));
+    },
+  });
 }
 
 /**
@@ -504,13 +511,14 @@ async function fetchRecommendationsCatalog(
 
   const client = await createClientForUser(user);
 
-  // 1. Collect seed films (rated + liked in parallel, then watchlist)
+  // 1. Collect seed films (rated + liked + watchlist in parallel where possible)
   const seeds: WatchlistFilm[] = [];
-  // Collect watchlist IMDb IDs during seed phase to avoid re-fetching for exclusion
   const watchlistImdbIds = new Set<string>();
+  // Pre-populate exclusion set from seeds to avoid redundant watched-films fetch later
+  const watchedImdbIdsFromSeeds = new Set<string>();
 
-  // Fetch rated and liked in parallel (both independent)
-  const [ratedResult, likedResult] = await Promise.allSettled([
+  // Fetch rated, liked, and first watchlist page in parallel (all independent)
+  const [ratedResult, likedResult, watchlistFirstPage] = await Promise.allSettled([
     client.getFilms({
       member: user.letterboxd_id,
       memberRelationship: 'Watched',
@@ -522,10 +530,15 @@ async function fetchRecommendationsCatalog(
       memberRelationship: 'Liked',
       perPage: 50,
     }),
+    client.getWatchlist({ perPage: 100 }),
   ]);
 
-  // Priority 1: rated films (≥3★)
+  // Priority 1: rated films (≥3★) — also collect all IMDb IDs for exclusion
   if (ratedResult.status === 'fulfilled') {
+    for (const film of ratedResult.value.items) {
+      const imdb = getImdbId(film);
+      if (imdb) watchedImdbIdsFromSeeds.add(imdb);
+    }
     const highRated = ratedResult.value.items.filter((f) => f.rating != null && f.rating >= 3);
     seeds.push(...highRated.slice(0, 50));
   } else {
@@ -537,30 +550,43 @@ async function fetchRecommendationsCatalog(
     for (const film of likedResult.value.items) {
       if (seeds.length >= 80) break;
       if (!seeds.some((s) => s.id === film.id)) seeds.push(film);
+      const imdb = getImdbId(film);
+      if (imdb) watchedImdbIdsFromSeeds.add(imdb);
     }
   } else if (likedResult.status === 'rejected') {
     logger.warn({ err: likedResult.reason, userId: user.id }, 'Failed to fetch liked films for recommendations');
   }
 
-  // Always fetch watchlist for exclusion, and use as seed fallback
-  try {
-    let cursor: string | undefined;
-    let page = 0;
-    do {
-      page++;
-      const wl = await client.getWatchlist({ perPage: 100, cursor });
-      for (const film of wl.items) {
-        const imdbId = getImdbId(film);
-        if (imdbId) watchlistImdbIds.add(imdbId);
-        // Use as seed fallback if not enough
-        if (seeds.length < 20 && !seeds.some((s) => s.id === film.id)) {
-          seeds.push(film);
-        }
+  // Watchlist: first page already fetched, paginate remaining
+  if (watchlistFirstPage.status === 'fulfilled') {
+    for (const film of watchlistFirstPage.value.items) {
+      const imdbId = getImdbId(film);
+      if (imdbId) watchlistImdbIds.add(imdbId);
+      if (seeds.length < 20 && !seeds.some((s) => s.id === film.id)) {
+        seeds.push(film);
       }
-      cursor = wl.cursor;
-    } while (cursor && page < 10);
-  } catch (err) {
-    logger.warn({ err, userId: user.id }, 'Failed to fetch watchlist for recommendations');
+    }
+    let cursor = watchlistFirstPage.value.cursor;
+    let page = 1;
+    while (cursor && page < 10) {
+      try {
+        page++;
+        const wl = await client.getWatchlist({ perPage: 100, cursor });
+        for (const film of wl.items) {
+          const imdbId = getImdbId(film);
+          if (imdbId) watchlistImdbIds.add(imdbId);
+          if (seeds.length < 20 && !seeds.some((s) => s.id === film.id)) {
+            seeds.push(film);
+          }
+        }
+        cursor = wl.cursor;
+      } catch (err) {
+        logger.warn({ err, userId: user.id }, 'Failed to fetch watchlist page for recommendations');
+        break;
+      }
+    }
+  } else {
+    logger.warn({ err: watchlistFirstPage.reason, userId: user.id }, 'Failed to fetch watchlist for recommendations');
   }
 
   if (seeds.length === 0) {
@@ -611,32 +637,38 @@ async function fetchRecommendationsCatalog(
     }
   }
 
-  // 5. Sort by weighted score, take top 250 (generous pool before exclusion)
+  // 5. Sort by weighted score, keep generous pool before exclusion
   const sorted = [...scoreMap.entries()]
     .sort((a, b) => b[1].score - a[1].score)
     .slice(0, 250);
 
-  // 6. Resolve TMDB IDs → IMDb IDs
-  const unresolvedIds: number[] = [];
-  for (const [tmdbId] of sorted) {
-    if (!tmdbToImdbCache.get(String(tmdbId))) {
-      unresolvedIds.push(tmdbId);
-    }
-  }
+  // 6. Resolve TMDB IDs → IMDb IDs progressively (batch of 30, early-exit when enough resolved)
+  const RESOLVE_BATCH_SIZE = 30;
+  const RESOLVE_TARGET = 60; // Need ~2x RECO_LIMIT to account for exclusions
+  let resolvedCount = sorted.filter(([id]) => tmdbToImdbCache.get(String(id))).length;
 
-  if (unresolvedIds.length > 0) {
-    const externalResults = await Promise.allSettled(
-      unresolvedIds.map((id) => getTmdbExternalIds(id, apiKey).then((ext) => ({ tmdbId: id, imdbId: ext.imdb_id }))),
+  for (let i = 0; i < sorted.length && resolvedCount < RESOLVE_TARGET; i += RESOLVE_BATCH_SIZE) {
+    const batch = sorted
+      .slice(i, i + RESOLVE_BATCH_SIZE)
+      .filter(([id]) => !tmdbToImdbCache.get(String(id)))
+      .map(([id]) => id);
+
+    if (batch.length === 0) continue;
+
+    const results = await Promise.allSettled(
+      batch.map((id) => getTmdbExternalIds(id, apiKey).then((ext) => ({ tmdbId: id, imdbId: ext.imdb_id }))),
     );
-    for (const result of externalResults) {
+    for (const result of results) {
       if (result.status === 'fulfilled' && result.value.imdbId) {
         tmdbToImdbCache.set(String(result.value.tmdbId), result.value.imdbId);
+        resolvedCount++;
       }
     }
   }
 
-  // 7. Exclude already-watched films AND watchlist films (reuse watchlistImdbIds from step 1)
-  const excludeImdbIds = new Set([...seedImdbIds, ...watchlistImdbIds]);
+  // 7. Exclude already-watched films AND watchlist films
+  //    Seeds from step 1 (rated + liked) already provided partial watched coverage.
+  const excludeImdbIds = new Set([...seedImdbIds, ...watchlistImdbIds, ...watchedImdbIdsFromSeeds]);
   try {
     let cursor: string | undefined;
     let page = 0;
@@ -1135,6 +1167,7 @@ export async function stremioRoutes(app: FastifyInstance) {
 
   app.get(
     '/poster',
+    { config: { rateLimit: false } },
     async (
       request: FastifyRequest<{
         Querystring: { url?: string; rating?: string };

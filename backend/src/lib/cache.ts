@@ -6,6 +6,21 @@ export interface CacheOptions {
   ttl?: number;
 }
 
+export class Coalescer<T> {
+  private inflight = new Map<string, Promise<T>>();
+
+  async run(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this.inflight.get(key);
+    if (existing) return existing;
+
+    const promise = fn().finally(() => this.inflight.delete(key));
+    this.inflight.set(key, promise);
+    return promise;
+  }
+
+  get size() { return this.inflight.size; }
+}
+
 export function createCache<T extends NonNullable<unknown>>(options: CacheOptions = {}) {
   return new LRUCache<string, T>({
     max: options.maxSize ?? cacheConfig.maxSize,
@@ -38,6 +53,16 @@ export const filmCache = createCache<CachedFilm>({
 
 export const userRatingCache = createCache<CachedRating>({
   ttl: 5 * 60 * 1000, // 5 minutes for user-specific data
+});
+
+// Full film lookup result cache (avoids re-fetching on cache hit)
+export interface FilmLookupCacheEntry {
+  letterboxdFilmId: string;
+  film: unknown; // LetterboxdFilm — stored as unknown to avoid circular import
+}
+export const filmLookupCache = createCache<FilmLookupCacheEntry>({
+  maxSize: 1000,
+  ttl: 60 * 60 * 1000, // 1 hour
 });
 
 // IMDb ID → Letterboxd ID mapping cache (populated from catalog fetches)
@@ -135,7 +160,7 @@ export const userClientCache = createCache<{ client: AuthenticatedClient; expire
 
 export const userCatalogCache = createCache<{ metas: StremioMeta[] }>({
   maxSize: 500,
-  ttl: 2 * 60 * 1000, // 2min — compromise between freshness and API savings
+  ttl: 5 * 60 * 1000, // 5min — invalidateUserCatalogs() covers manual changes
 });
 
 // Watched IMDb IDs per user (for "Not Watched" filter)
@@ -254,6 +279,7 @@ export interface CacheStats {
 export function getCacheStats(): CacheStats {
   return {
     film: { size: filmCache.size, max: filmCache.max },
+    filmLookup: { size: filmLookupCache.size, max: filmLookupCache.max },
     userRating: { size: userRatingCache.size, max: userRatingCache.max },
     imdbToLetterboxd: { size: imdbToLetterboxdCache.size, max: imdbToLetterboxdCache.max },
     userLists: { size: userListsCache.size, max: userListsCache.max },

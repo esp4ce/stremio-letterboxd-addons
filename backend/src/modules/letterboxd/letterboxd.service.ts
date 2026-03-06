@@ -6,10 +6,10 @@ import {
 } from './letterboxd.client.js';
 import {
   filmCache,
-  userRatingCache,
   type CachedFilm,
   type CachedRating,
 } from '../../lib/cache.js';
+import { getFilmRatingData } from '../stremio/meta.service.js';
 import { createChildLogger } from '../../lib/logger.js';
 import { fetchPageHtml, extractListIdFromListPage } from '../../lib/html-scraper.js';
 import { callWithAppToken } from '../../lib/app-client.js';
@@ -114,32 +114,7 @@ export async function getFilmRating(
   filmId: string,
   userId: string
 ): Promise<FilmRating> {
-  const cacheKey = `rating:${userId}:${filmId}`;
-  const cached = userRatingCache.get(cacheKey) as FilmRating | undefined;
-  if (cached) {
-    logger.debug({ cacheKey }, 'Rating cache hit');
-    return cached;
-  }
-
-  const [relationship, statistics] = await Promise.all([
-    client.getFilmRelationship(filmId),
-    client.getFilmStatistics(filmId),
-  ]);
-
-  const rating: FilmRating = {
-    filmId,
-    userRating: relationship.rating ?? null,
-    watched: relationship.watched,
-    liked: relationship.liked,
-    inWatchlist: relationship.inWatchlist,
-    communityRating: statistics.rating ?? null,
-    communityRatings: statistics.counts.ratings,
-  };
-
-  userRatingCache.set(cacheKey, rating);
-  logger.debug({ filmId, userRating: rating.userRating }, 'Film rating fetched');
-
-  return rating;
+  return getFilmRatingData(client, filmId, { userId });
 }
 
 export interface ParsedListUrl {

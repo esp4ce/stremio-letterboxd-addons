@@ -1,10 +1,18 @@
 import { AuthenticatedClient, LetterboxdFilm } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
-import { imdbToLetterboxdCache, cinemetaCache, cinemetaRawCache, filmReviewsCache } from '../../lib/cache.js';
+import { Coalescer, imdbToLetterboxdCache, cinemetaCache, cinemetaRawCache, filmReviewsCache, filmLookupCache, userRatingCache } from '../../lib/cache.js';
 import type { CachedRating, CinemetaFilmData } from '../../lib/cache.js';
 import { serverConfig } from '../../config/index.js';
 
 const logger = createChildLogger('meta-service');
+
+// ============================================================================
+// Coalescers (deduplicate concurrent in-flight requests)
+// ============================================================================
+
+const cinemetaCoalescer = new Coalescer<Record<string, unknown> | null>();
+const filmLookupCoalescer = new Coalescer<FilmLookupResult | null>();
+const ratingCoalescer = new Coalescer<CachedRating>();
 
 // ============================================================================
 // Interfaces
@@ -17,77 +25,94 @@ interface FilmLookupResult {
 }
 
 // ============================================================================
-// Cinemeta Integration
+// Cinemeta Integration (shared fetch, two cache layers)
 // ============================================================================
+
+/**
+ * Single HTTP fetch for Cinemeta, shared by both getRawCinemetaMeta and getFullFilmInfoFromCinemeta.
+ * Result is stored in cinemetaRawCache and coalesced.
+ */
+async function fetchCinemetaRaw(imdbId: string): Promise<Record<string, unknown> | null> {
+  const cached = cinemetaRawCache.get(imdbId);
+  if (cached) return cached;
+
+  return cinemetaCoalescer.run(imdbId, async () => {
+    // Double-check after coalesce
+    const rechecked = cinemetaRawCache.get(imdbId);
+    if (rechecked) return rechecked;
+
+    try {
+      const response = await fetch(`https://v3-cinemeta.strem.io/meta/movie/${imdbId}.json`);
+      if (!response.ok) {
+        logger.debug({ imdbId, status: response.status }, 'Cinemeta lookup failed');
+        return null;
+      }
+
+      const data = await response.json() as { meta?: Record<string, unknown> };
+      if (!data.meta?.['name']) return null;
+
+      cinemetaRawCache.set(imdbId, data.meta);
+      return data.meta;
+    } catch (error) {
+      logger.error({ error, imdbId }, 'Error fetching from Cinemeta');
+      return null;
+    }
+  });
+}
 
 /**
  * Fetch full film info from Cinemeta (public API)
  * Returns: name, year, poster, background, genres, director, cast, writer, runtime, description, trailers
  */
 export async function getFullFilmInfoFromCinemeta(imdbId: string): Promise<CinemetaFilmData | null> {
-  // Check cache first
+  // Check transformed cache first
   const cached = cinemetaCache.get(imdbId);
   if (cached) {
     logger.debug({ imdbId }, 'Cinemeta cache hit');
     return cached;
   }
 
-  try {
-    const response = await fetch(`https://v3-cinemeta.strem.io/meta/movie/${imdbId}.json`);
-    if (!response.ok) {
-      logger.debug({ imdbId, status: response.status }, 'Cinemeta lookup failed');
-      return null;
-    }
+  const raw = await fetchCinemetaRaw(imdbId);
+  if (!raw) return null;
 
-    const data = await response.json() as {
-      meta?: {
-        name?: string;
-        year?: string;
-        releaseInfo?: string;
-        poster?: string;
-        background?: string;
-        genres?: string[];
-        director?: string[];
-        cast?: string[];
-        writer?: string[];
-        runtime?: string;
-        description?: string;
-        trailers?: Array<{ source: string; type: string }>;
-      };
-    };
+  const meta = raw as {
+    name?: string;
+    year?: string;
+    releaseInfo?: string;
+    poster?: string;
+    background?: string;
+    genres?: string[];
+    director?: string[];
+    cast?: string[];
+    writer?: string[];
+    runtime?: string;
+    description?: string;
+    trailers?: Array<{ source: string; type: string }>;
+  };
 
-    if (!data.meta?.name) {
-      return null;
-    }
+  if (!meta.name) return null;
 
-    const meta = data.meta;
-    const year = meta.year ? parseInt(meta.year, 10) :
-                 meta.releaseInfo ? parseInt(meta.releaseInfo, 10) : undefined;
+  const year = meta.year ? parseInt(meta.year, 10) :
+               meta.releaseInfo ? parseInt(meta.releaseInfo, 10) : undefined;
 
-    const cinemetaData: CinemetaFilmData = {
-      name: meta.name!,
-      year,
-      poster: meta.poster,
-      background: meta.background,
-      genres: meta.genres,
-      director: meta.director,
-      cast: meta.cast,
-      writer: meta.writer,
-      runtime: meta.runtime,
-      description: meta.description,
-      trailers: meta.trailers,
-    };
+  const cinemetaData: CinemetaFilmData = {
+    name: meta.name,
+    year,
+    poster: meta.poster,
+    background: meta.background,
+    genres: meta.genres,
+    director: meta.director,
+    cast: meta.cast,
+    writer: meta.writer,
+    runtime: meta.runtime,
+    description: meta.description,
+    trailers: meta.trailers,
+  };
 
-    logger.info({ imdbId, name: meta.name, year, hasTrailers: !!meta.trailers?.length }, 'Got film info from Cinemeta');
+  logger.info({ imdbId, name: meta.name, year, hasTrailers: !!meta.trailers?.length }, 'Got film info from Cinemeta');
+  cinemetaCache.set(imdbId, cinemetaData);
 
-    // Cache the result
-    cinemetaCache.set(imdbId, cinemetaData);
-
-    return cinemetaData;
-  } catch (error) {
-    logger.error({ error, imdbId }, 'Error fetching from Cinemeta');
-    return null;
-  }
+  return cinemetaData;
 }
 
 /**
@@ -95,22 +120,7 @@ export async function getFullFilmInfoFromCinemeta(imdbId: string): Promise<Cinem
  * Used for pass-through in the /meta route so no data is lost.
  */
 export async function getRawCinemetaMeta(imdbId: string): Promise<Record<string, unknown> | null> {
-  const cached = cinemetaRawCache.get(imdbId);
-  if (cached) return cached;
-
-  try {
-    const response = await fetch(`https://v3-cinemeta.strem.io/meta/movie/${imdbId}.json`);
-    if (!response.ok) return null;
-
-    const data = await response.json() as { meta?: Record<string, unknown> };
-    if (!data.meta?.['name']) return null;
-
-    cinemetaRawCache.set(imdbId, data.meta);
-    return data.meta;
-  } catch (error) {
-    logger.error({ error, imdbId }, 'Error fetching raw Cinemeta meta');
-    return null;
-  }
+  return fetchCinemetaRaw(imdbId);
 }
 
 // ============================================================================
@@ -167,60 +177,79 @@ async function findFilmBySearch(
 }
 
 /**
- * Try to find Letterboxd film by IMDb ID using cache, external ID lookup, or search fallback
+ * Try to find Letterboxd film by IMDb ID using cache, external ID lookup, or search fallback.
+ * Full result is cached (filmLookupCache) to avoid extra API calls on cache hit.
  */
 export async function findFilmByImdb(
   client: AuthenticatedClient,
   imdbId: string
 ): Promise<FilmLookupResult | null> {
-  // Check cache first
-  const cached = imdbToLetterboxdCache.get(imdbId);
-  if (cached) {
-    logger.debug({ imdbId, letterboxdFilmId: cached }, 'IMDb→Letterboxd cache hit');
+  // Check full result cache first (0 API calls on hit)
+  const fullCached = filmLookupCache.get(imdbId);
+  if (fullCached) {
+    logger.debug({ imdbId, letterboxdFilmId: fullCached.letterboxdFilmId }, 'Film lookup cache hit');
+    return { letterboxdFilmId: fullCached.letterboxdFilmId, film: fullCached.film as LetterboxdFilm };
+  }
+
+  return filmLookupCoalescer.run(imdbId, async () => {
+    // Double-check after coalesce
+    const rechecked = filmLookupCache.get(imdbId);
+    if (rechecked) {
+      return { letterboxdFilmId: rechecked.letterboxdFilmId, film: rechecked.film as LetterboxdFilm };
+    }
+
+    // Check ID-only cache (populated from catalog transforms)
+    const cachedId = imdbToLetterboxdCache.get(imdbId);
+    if (cachedId) {
+      logger.debug({ imdbId, letterboxdFilmId: cachedId }, 'IMDb→Letterboxd cache hit');
+      try {
+        const film = await client.getFilmByLid(cachedId);
+        const result: FilmLookupResult = { letterboxdFilmId: cachedId, film };
+        filmLookupCache.set(imdbId, { letterboxdFilmId: cachedId, film });
+        return result;
+      } catch (error) {
+        logger.warn({ error, imdbId, letterboxdFilmId: cachedId }, 'Cached Letterboxd ID invalid, trying external lookup');
+      }
+    }
+
+    // Try the external ID endpoint first (most reliable)
     try {
-      const film = await client.getFilmByLid(cached);
-      return { letterboxdFilmId: cached, film };
+      logger.info({ imdbId }, 'Calling getFilmByExternalId...');
+      const film = await client.getFilmByExternalId(imdbId, 'imdb');
+
+      if (film) {
+        imdbToLetterboxdCache.set(imdbId, film.id);
+        filmLookupCache.set(imdbId, { letterboxdFilmId: film.id, film });
+        logger.info({ imdbId, letterboxdFilmId: film.id, filmName: film.name }, 'Found Letterboxd film via external ID');
+        return { letterboxdFilmId: film.id, film };
+      }
     } catch (error) {
-      logger.warn({ error, imdbId, letterboxdFilmId: cached }, 'Cached Letterboxd ID invalid, trying external lookup');
+      logger.debug({ error, imdbId }, 'External ID lookup failed');
     }
-  }
 
-  // Try the external ID endpoint first (most reliable)
-  try {
-    logger.info({ imdbId }, 'Calling getFilmByExternalId...');
-    const film = await client.getFilmByExternalId(imdbId, 'imdb');
+    // Fallback: Get info from Cinemeta and search Letterboxd
+    logger.info({ imdbId }, 'External ID returned 404, trying Cinemeta + search fallback');
 
-    if (film) {
-      // Cache the mapping
-      imdbToLetterboxdCache.set(imdbId, film.id);
-      logger.info({ imdbId, letterboxdFilmId: film.id, filmName: film.name }, 'Found Letterboxd film via external ID');
-      return { letterboxdFilmId: film.id, film };
+    const cinemetaData = await getFullFilmInfoFromCinemeta(imdbId);
+    if (!cinemetaData) {
+      logger.debug({ imdbId }, 'Cannot find film: Cinemeta lookup failed');
+      return null;
     }
-  } catch (error) {
-    logger.debug({ error, imdbId }, 'External ID lookup failed');
-  }
 
-  // Fallback: Get info from Cinemeta and search Letterboxd
-  logger.info({ imdbId }, 'External ID returned 404, trying Cinemeta + search fallback');
+    // Search Letterboxd with the name and year from Cinemeta
+    const film = await findFilmBySearch(client, cinemetaData.name, cinemetaData.year);
+    if (!film) {
+      logger.debug({ imdbId, name: cinemetaData.name }, 'Cannot find film: Letterboxd search returned no results');
+      return null;
+    }
 
-  const cinemetaData = await getFullFilmInfoFromCinemeta(imdbId);
-  if (!cinemetaData) {
-    logger.debug({ imdbId }, 'Cannot find film: Cinemeta lookup failed');
-    return null;
-  }
+    // Cache the mapping for future lookups
+    imdbToLetterboxdCache.set(imdbId, film.id);
+    filmLookupCache.set(imdbId, { letterboxdFilmId: film.id, film });
+    logger.info({ imdbId, letterboxdFilmId: film.id, filmName: film.name }, 'Found Letterboxd film via search fallback');
 
-  // Search Letterboxd with the name and year from Cinemeta
-  const film = await findFilmBySearch(client, cinemetaData.name, cinemetaData.year);
-  if (!film) {
-    logger.debug({ imdbId, name: cinemetaData.name }, 'Cannot find film: Letterboxd search returned no results');
-    return null;
-  }
-
-  // Cache the mapping for future lookups
-  imdbToLetterboxdCache.set(imdbId, film.id);
-  logger.info({ imdbId, letterboxdFilmId: film.id, filmName: film.name }, 'Found Letterboxd film via search fallback');
-
-  return { letterboxdFilmId: film.id, film, cinemetaData };
+    return { letterboxdFilmId: film.id, film, cinemetaData };
+  });
 }
 
 // ============================================================================
@@ -228,32 +257,60 @@ export async function findFilmByImdb(
 // ============================================================================
 
 /**
- * Get film rating data with caching
+ * Get film rating data with optional per-user caching.
+ * When userId is provided, results are cached in userRatingCache for 5 min.
  */
 export async function getFilmRatingData(
   client: AuthenticatedClient,
   letterboxdFilmId: string,
+  options?: { userId?: string; force?: boolean },
 ): Promise<CachedRating> {
-  // Always fetch fresh user relationship data so meta page reflects current state
-  // (watched/liked/watchlist/rating must be up-to-date when user opens a film)
-  logger.info({ letterboxdFilmId }, 'Fetching film relationship and statistics...');
+  const userId = options?.userId;
+  const force = options?.force;
 
-  const [relationship, statistics] = await Promise.all([
-    client.getFilmRelationship(letterboxdFilmId),
-    client.getFilmStatistics(letterboxdFilmId),
-  ]);
+  // Check cache if userId provided and not forcing
+  if (userId && !force) {
+    const cacheKey = `rating:${userId}:${letterboxdFilmId}`;
+    const cached = userRatingCache.get(cacheKey);
+    if (cached) {
+      logger.debug({ letterboxdFilmId, userId }, 'Rating cache hit');
+      return cached;
+    }
+  }
 
-  const rating: CachedRating = {
-    filmId: letterboxdFilmId,
-    userRating: relationship.rating ?? null,
-    watched: relationship.watched,
-    liked: relationship.liked,
-    inWatchlist: relationship.inWatchlist,
-    communityRating: statistics.rating ?? null,
-    communityRatings: statistics.counts.ratings,
-  };
+  const coalesceKey = `${userId ?? 'anon'}:${letterboxdFilmId}`;
+  return ratingCoalescer.run(coalesceKey, async () => {
+    // Double-check cache after coalesce
+    if (userId && !force) {
+      const cacheKey = `rating:${userId}:${letterboxdFilmId}`;
+      const rechecked = userRatingCache.get(cacheKey);
+      if (rechecked) return rechecked;
+    }
 
-  return rating;
+    logger.info({ letterboxdFilmId }, 'Fetching film relationship and statistics...');
+
+    const [relationship, statistics] = await Promise.all([
+      client.getFilmRelationship(letterboxdFilmId),
+      client.getFilmStatistics(letterboxdFilmId),
+    ]);
+
+    const rating: CachedRating = {
+      filmId: letterboxdFilmId,
+      userRating: relationship.rating ?? null,
+      watched: relationship.watched,
+      liked: relationship.liked,
+      inWatchlist: relationship.inWatchlist,
+      communityRating: statistics.rating ?? null,
+      communityRatings: statistics.counts.ratings,
+    };
+
+    // Cache if userId provided
+    if (userId) {
+      userRatingCache.set(`rating:${userId}:${letterboxdFilmId}`, rating);
+    }
+
+    return rating;
+  });
 }
 
 // ============================================================================
@@ -328,7 +385,7 @@ export async function buildLetterboxdStreams(
   }
 
   const { letterboxdFilmId, film } = result;
-  const rating = await getFilmRatingData(client, letterboxdFilmId);
+  const rating = await getFilmRatingData(client, letterboxdFilmId, { userId });
   const baseUrl = serverConfig.publicUrl;
   const letterboxdLink = film.links?.find(l => l.type === 'letterboxd');
   const letterboxdUrl = letterboxdLink?.url ?? `https://letterboxd.com/film/${film.id}/`;
