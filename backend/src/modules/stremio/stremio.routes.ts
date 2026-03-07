@@ -1575,17 +1575,20 @@ export async function stremioRoutes(app: FastifyInstance) {
           const { letterboxdFilmId } = letterboxdResult;
 
           // Poster badge (non-critical)
+          const metaPreferences = getUserPreferences(user);
+          const showRatings = metaPreferences?.showRatings !== false;
           try {
-            const ratingData = await getFilmRatingData(client, letterboxdFilmId);
-            if (ratingData.communityRating !== null && rawMeta['poster']) {
-              meta['poster'] = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(rawMeta['poster'] as string)}&rating=${ratingData.communityRating.toFixed(1)}`;
+            if (showRatings) {
+              const ratingData = await getFilmRatingData(client, letterboxdFilmId);
+              if (ratingData.communityRating !== null && rawMeta['poster']) {
+                meta['poster'] = `${serverConfig.publicUrl}/poster?url=${encodeURIComponent(rawMeta['poster'] as string)}&rating=${ratingData.communityRating.toFixed(1)}`;
+              }
             }
           } catch {
             // Rating lookup failed — skip badge
           }
 
           // Popular reviews as a distinct links section (appears before Summary in Stremio)
-          const metaPreferences = getUserPreferences(user);
           const showReviews = metaPreferences?.showReviews !== false;
           if (showReviews) {
             try {

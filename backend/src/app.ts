@@ -14,7 +14,7 @@ import { generateBaseManifest } from './modules/stremio/stremio.service.js';
 export async function buildApp(httpsOptions?: ServerOptions) {
   const app = Fastify({
     logger: false,
-    maxParamLength: 10000,
+    routerOptions: { maxParamLength: 10000 },
     ...(httpsOptions && { https: httpsOptions }),
   });
 
