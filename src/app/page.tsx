@@ -1,30 +1,27 @@
 import TransitionLink from "./components/TransitionLink";
 
+
 const FEATURES = [
-  "Watchlist & diary",
-  "Private lists",
-  "Friends activity",
-  "Ratings on every film",
-  "Rate & like from Stremio",
-  "Toggle watched & watchlist",
+  "Watchlist & liked films",
+  "Diary & friends activity",
+  "Any public list by URL",
+  "Popular & Top 250",
+  "Ratings on posters",
+  "Rate, like & manage from Stremio",
+  "Sort, shuffle & filter",
   "All platforms",
-  "Letterboxd links",
 ];
 
 export default function Home() {
   return (
     <div className="fixed inset-0 flex h-[100dvh] w-screen cursor-default flex-col bg-[#0a0a0a] text-white sm:h-screen sm:items-center sm:justify-center">
-      <div className="flex min-h-0 flex-1 w-full max-w-7xl flex-col items-center justify-center overflow-y-auto px-4 sm:mx-auto sm:-mt-16 sm:flex-none sm:h-full sm:overflow-visible">
+      <div className="flex min-h-0 w-full max-w-7xl flex-1 flex-col items-center justify-center overflow-y-auto px-4 sm:mx-auto sm:-mt-16 sm:h-full sm:flex-none sm:overflow-visible">
         <h1 className="mt-10 text-center text-2xl font-semibold tracking-tight text-white sm:mt-0 sm:text-5xl lg:text-6xl xl:text-7xl">
-          Letterboxd → Stremio Addon
+          Your Letterboxd. Inside Stremio.
         </h1>
 
         <p className="mt-4 text-center text-xl font-light text-zinc-400 sm:mt-6 sm:text-2xl">
-          Unofficial addon
-        </p>
-
-        <p className="mx-auto mt-4 max-w-3xl text-center text-lg font-light leading-relaxed text-zinc-300 sm:mt-8 sm:text-2xl">
-          This addon syncs your Letterboxd data into Stremio.
+          Free unofficial addon for all platforms.
         </p>
 
         <div className="mx-auto mt-6 w-full max-w-5xl max-h-[28vh] overflow-y-auto sm:mt-12 sm:max-h-none sm:overflow-visible config-scroll">
@@ -45,21 +42,33 @@ export default function Home() {
           </ul>
         </div>
 
-        <p className="mt-6 text-center text-sm font-light text-zinc-500 sm:mt-10">
-          After installing, use{" "}
-          <a
-            href="https://stremio-addon-manager.vercel.app/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-zinc-400 underline decoration-zinc-700 underline-offset-2 transition-colors hover:text-zinc-200"
-          >
-            Stremio Addon Manager
-          </a>{" "}
-          to prioritize this addon for the best experience.
-        </p>
+        <div className="mt-6 flex flex-col items-center gap-2 text-center text-sm font-light text-zinc-500 sm:mt-10">
+          <span>
+            Use{" "}
+            <a
+              href="https://stremio-addon-manager.vercel.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-zinc-400 underline decoration-zinc-700 underline-offset-2 transition-colors hover:text-zinc-200"
+            >
+              Stremio Addon Manager
+            </a>{" "}
+            for the best experience.
+          </span>
+          <span>
+            <TransitionLink
+              href="/faq"
+              direction="up"
+              className="text-zinc-400 underline decoration-zinc-700 underline-offset-2 transition-colors hover:text-zinc-200"
+            >
+              FAQ
+            </TransitionLink>
+            {" "} for common questions.
+          </span>
+        </div>
       </div>
 
-      <div className="shrink-0 flex justify-center py-6 sm:absolute sm:bottom-12">
+      <div className="flex shrink-0 justify-center py-6 sm:absolute sm:bottom-12">
         <TransitionLink
           href="/configure"
           direction="up"

@@ -121,7 +121,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const topLists = getTopAccessedLists(clampedDays, 15);
       const topActionedFilms = getTopActionedFilms(clampedDays, 15);
 
-      // Resolve film titles: imdbId → Cinemeta, filmId (Letterboxd LID) → Letterboxd API
+      // Resolve film titles: imdbId → Cinemeta, filmId → letterboxd-client
       const titleMap = new Map<string, string>(); // key = imdbId or filmId
 
       // 1. Collect all imdbIds

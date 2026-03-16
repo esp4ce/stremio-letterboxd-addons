@@ -36,6 +36,8 @@ interface FullModeProps extends BaseProps {
   mode: "full";
   preferences: UserPreferences;
   onPreferencesChange: (prefs: UserPreferences) => void;
+  sortVariants: Record<string, string[]>;
+  onSortVariantsChange: (variants: Record<string, string[]>) => void;
 }
 
 interface PublicModeProps extends BaseProps {
@@ -58,6 +60,8 @@ interface PublicModeProps extends BaseProps {
   onPublicCatalogNamesChange: (names: Record<string, string>) => void;
   publicCatalogOrder: string[];
   onPublicCatalogOrderChange: (order: string[]) => void;
+  publicSortVariants: Record<string, string[]>;
+  onPublicSortVariantsChange: (variants: Record<string, string[]>) => void;
 }
 
 type ConfigurationModalProps = FullModeProps | PublicModeProps;
@@ -68,7 +72,8 @@ type ActiveCatalogItem =
   | { id: string; type: "base"; key: string; label: string; description: string }
   | { id: string; type: "ownList"; listId: string; label: string; filmCount: number }
   | { id: string; type: "externalList"; list: { id: string; name: string; owner: string; filmCount: number } }
-  | { id: string; type: "externalWatchlist"; watchlist: { username: string; displayName: string } };
+  | { id: string; type: "externalWatchlist"; watchlist: { username: string; displayName: string } }
+  | { id: string; type: "variant"; baseCatalogId: string; variantKey: string; label: string };
 
 interface BaseCatalogDef {
   id: string;
@@ -86,6 +91,15 @@ const ALL_BASE_DEFS: BaseCatalogDef[] = [
   { id: "letterboxd-popular", key: "popular", label: "Popular This Week", description: "Trending films on Letterboxd" },
   { id: "letterboxd-top250", key: "top250", label: "Top 250 Narrative Features", description: "Official Top 250 by Dave" },
 ];
+
+const SORT_VARIANT_OPTIONS: Array<{ key: string; label: string; description: string }> = [
+  { key: 'shuffle', label: 'Shuffle', description: 'Random order each time' },
+  { key: 'not-watched', label: 'Not Watched', description: 'Hide films you\'ve seen' },
+  { key: 'popular', label: 'Popular', description: 'Sort by popularity' },
+];
+
+// Public mode: no auth → no "Not Watched" (requires user's watched history)
+const PUBLIC_SORT_VARIANT_OPTIONS = SORT_VARIANT_OPTIONS.filter((o) => o.key !== 'not-watched');
 
 const PENCIL_ICON = "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z";
 const TRASH_PATH = "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16";
@@ -209,12 +223,15 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
   // Catalog name editing state
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+  // Sort variant expansion state
+  const [expandedVariantCatalog, setExpandedVariantCatalog] = useState<string | null>(null);
 
-  // DnD sensors
+  // DnD sensors — drag only activates from the grip handle
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
+
 
   // ── Catalog order helpers ─────────────────────────────────────────────────
 
@@ -231,6 +248,70 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
       p.onPreferencesChange({ ...p.preferences, catalogOrder: order });
     }
   };
+
+  // ── Sort variant helpers ─────────────────────────────────────────────────
+
+  const getSortVariants = (): Record<string, string[]> => {
+    if (isPublic) return (props as PublicModeProps).publicSortVariants;
+    return (props as FullModeProps).sortVariants;
+  };
+
+  const setSortVariants = (v: Record<string, string[]>) => {
+    if (isPublic) (props as PublicModeProps).onPublicSortVariantsChange(v);
+    else (props as FullModeProps).onSortVariantsChange(v);
+  };
+
+  const getCatalogVariants = (catalogId: string): string[] => {
+    return getSortVariants()[catalogId] || [];
+  };
+
+  const toggleCatalogVariant = (catalogId: string, variantKey: string) => {
+    const current = getSortVariants();
+    const catalogVariants = current[catalogId] || [];
+    const enabling = !catalogVariants.includes(variantKey);
+    const updated = enabling
+      ? [...catalogVariants, variantKey]
+      : catalogVariants.filter((k) => k !== variantKey);
+    const nextVariants = { ...current };
+    if (updated.length > 0) {
+      nextVariants[catalogId] = updated;
+    } else {
+      delete nextVariants[catalogId];
+    }
+
+    // Compute new catalog order
+    const variantCatId = `${catalogId}--${variantKey}`;
+    const currentOrder = getCatalogOrder();
+    const newOrder = enabling
+      ? (() => {
+          const baseIdx = currentOrder.indexOf(catalogId);
+          const o = [...currentOrder];
+          o.splice(baseIdx >= 0 ? baseIdx + 1 : o.length, 0, variantCatId);
+          return o;
+        })()
+      : currentOrder.filter((id) => id !== variantCatId);
+
+    // Update both in a single state change to avoid stale overwrites
+    if (isPublic) {
+      (props as PublicModeProps).onPublicSortVariantsChange(nextVariants);
+      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+    } else {
+      const p = props as FullModeProps;
+      p.onPreferencesChange({ ...p.preferences, sortVariants: nextVariants, catalogOrder: newOrder });
+    }
+  };
+
+  // Catalogs that support genre/decade filtering (and thus sort variants)
+  const canHaveVariants = (catalogId: string): boolean => {
+    return catalogId === 'letterboxd-watchlist'
+      || catalogId === 'letterboxd-liked-films'
+      || catalogId === 'letterboxd-popular'
+      || catalogId === 'letterboxd-top250'
+      || catalogId.startsWith('letterboxd-list-')
+      || catalogId.startsWith('letterboxd-watchlist-');
+  };
+
+  const availableVariantOptions = isPublic ? PUBLIC_SORT_VARIANT_OPTIONS : SORT_VARIANT_OPTIONS;
 
   // ── Catalog name helpers ──────────────────────────────────────────────────
 
@@ -456,6 +537,34 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     allActiveItemsMap.set(catId, { id: catId, type: "externalWatchlist", watchlist: w });
   }
 
+  // Add variant items from sortVariants map
+  const currentSortVariants = getSortVariants();
+  for (const [baseCatalogId, keys] of Object.entries(currentSortVariants)) {
+    for (const key of keys) {
+      const opt = SORT_VARIANT_OPTIONS.find(o => o.key === key);
+      if (!opt) continue;
+      // Find a label for the base catalog
+      const baseDef = applicableBaseDefs.find(d => d.id === baseCatalogId);
+      const baseList = lists.find(l => `letterboxd-list-${l.id}` === baseCatalogId);
+      const baseExtList = externalListsToShow.find(l => `letterboxd-list-${l.id}` === baseCatalogId);
+      const baseExtWl = externalWatchlistsToShow.find(w => `letterboxd-watchlist-${w.username}` === baseCatalogId);
+      let baseName = baseCatalogId;
+      if (baseDef) baseName = getCatalogDisplayName(baseCatalogId, baseDef.label);
+      else if (baseList) baseName = getCatalogDisplayName(baseCatalogId, baseList.name);
+      else if (baseExtList) baseName = getCatalogDisplayName(baseCatalogId, baseExtList.name);
+      else if (baseExtWl) baseName = getCatalogDisplayName(baseCatalogId, `${baseExtWl.displayName}'s Watchlist`);
+
+      const variantId = `${baseCatalogId}--${key}`;
+      allActiveItemsMap.set(variantId, {
+        id: variantId,
+        type: "variant",
+        baseCatalogId,
+        variantKey: key,
+        label: `${baseName} (${opt.label})`,
+      });
+    }
+  }
+
   // Sort by catalogOrder (items not in order go to end, preserving insertion order among them)
   const catalogOrder = getCatalogOrder();
   const sortedActiveItems: ActiveCatalogItem[] = [];
@@ -494,6 +603,7 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
         const def = `${item.watchlist.displayName}'s Watchlist`;
         return getCatalogDisplayName(item.id, def);
       }
+      case "variant": return item.label;
     }
   };
 
@@ -503,6 +613,7 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
       case "ownList": return item.label;
       case "externalList": return `${item.list.name} (${item.list.owner})`;
       case "externalWatchlist": return `${item.watchlist.displayName}'s Watchlist`;
+      case "variant": return item.label;
     }
   };
 
@@ -512,6 +623,10 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
       case "ownList": return `${item.filmCount} films`;
       case "externalList": return `by ${item.list.owner} · ${item.list.filmCount} films`;
       case "externalWatchlist": return `@${item.watchlist.username} · watchlist`;
+      case "variant": {
+        const opt = SORT_VARIANT_OPTIONS.find(o => o.key === item.variantKey);
+        return opt?.description || "Sort variant";
+      }
     }
   };
 
@@ -522,7 +637,10 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     const onRemove =
       item.type === "ownList" ? () => toggleOwnList(item.listId)
       : item.type === "externalList" ? () => removeExternalList(item.list.id)
-      : () => removeExternalWatchlist(item.watchlist.username);
+      : item.type === "externalWatchlist" ? () => removeExternalWatchlist(item.watchlist.username)
+      : item.type === "variant" ? () => toggleCatalogVariant(item.baseCatalogId, item.variantKey)
+      : undefined;
+    if (!onRemove) return null;
     return (
       <button type="button" onClick={onRemove} className="flex-shrink-0 text-zinc-500 transition-colors hover:text-zinc-300">
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -573,24 +691,74 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={effectiveCatalogOrder} strategy={verticalListSortingStrategy}>
                   <div className="mt-3 space-y-1.5">
-                    {sortedActiveItems.map((item) => (
-                      <SortableCatalogRow key={item.id} id={item.id}>
-                        <div className="min-w-0 flex-1 pr-2">
-                          <EditableName
-                            catalogId={item.id}
-                            displayName={getItemDisplayName(item)}
-                            editingCatalogId={editingCatalogId}
-                            editingName={editingName}
-                            onEditingNameChange={setEditingName}
-                            onStartEditing={() => startEditingCatalogName(item.id, getItemDisplayName(item))}
-                            onSave={() => saveCatalogName(item.id, getItemDefaultName(item))}
-                            onCancel={() => setEditingCatalogId(null)}
-                          />
-                          <p className="text-[11px] text-zinc-500">{getItemSubtext(item)}</p>
+                    {sortedActiveItems.map((item) => {
+                      const isVariantItem = item.type === "variant";
+                      const variants = isVariantItem ? [] : getCatalogVariants(item.id);
+                      const hasVariants = !isVariantItem && canHaveVariants(item.id);
+                      const isExpanded = expandedVariantCatalog === item.id;
+
+                      return (
+                        <div key={item.id}>
+                          <SortableCatalogRow id={item.id}>
+                            <div className="min-w-0 flex-1 pr-2">
+                              <EditableName
+                                catalogId={item.id}
+                                displayName={getItemDisplayName(item)}
+                                editingCatalogId={editingCatalogId}
+                                editingName={editingName}
+                                onEditingNameChange={setEditingName}
+                                onStartEditing={() => startEditingCatalogName(item.id, getItemDisplayName(item))}
+                                onSave={() => saveCatalogName(item.id, getItemDefaultName(item))}
+                                onCancel={() => setEditingCatalogId(null)}
+                              />
+                              <div className="flex items-center gap-2">
+                                <p className="text-[11px] text-zinc-500">{getItemSubtext(item)}</p>
+                                {variants.length > 0 && (
+                                  <span className="text-[10px] text-zinc-600">
+                                    +{variants.length} sort{variants.length > 1 ? "s" : ""}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {hasVariants && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedVariantCatalog(isExpanded ? null : item.id);
+                                }}
+                                className={`flex-shrink-0 rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300 ${isExpanded ? "bg-zinc-700/50 text-zinc-300" : ""}`}
+                                title="Sort variants"
+                              >
+                                <svg className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            )}
+                            {renderActiveItemAction(item)}
+                          </SortableCatalogRow>
+                          {isExpanded && hasVariants && (
+                            <div className="ml-6 mt-1 mb-1 flex flex-wrap gap-1.5 rounded-lg bg-zinc-800/20 px-3 py-2" onPointerDown={(e) => e.stopPropagation()}>
+                              {availableVariantOptions.map((opt) => {
+                                const active = variants.includes(opt.key);
+                                return (
+                                  <button
+                                    key={opt.key}
+                                    type="button"
+                                    onClick={() => toggleCatalogVariant(item.id, opt.key)}
+                                    className={`rounded-full border px-3 py-1 text-[11px] transition-colors ${active ? "border-white/30 bg-white/10 text-white" : "border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"}`}
+                                    title={opt.description}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                              <p className="w-full mt-1 text-[10px] text-zinc-600">Creates a separate catalog for each enabled option</p>
+                            </div>
+                          )}
                         </div>
-                        {renderActiveItemAction(item)}
-                      </SortableCatalogRow>
-                    ))}
+                      );
+                    })}
                   </div>
                 </SortableContext>
               </DndContext>

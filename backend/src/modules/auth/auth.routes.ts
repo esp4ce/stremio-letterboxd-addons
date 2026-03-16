@@ -89,6 +89,7 @@ export async function authRoutes(app: FastifyInstance) {
           properties: {
             username: { type: 'string' },
             password: { type: 'string' },
+            totp: { type: 'string' },
           },
           required: ['username', 'password'],
         },
@@ -96,7 +97,7 @@ export async function authRoutes(app: FastifyInstance) {
     },
     async (
       request: FastifyRequest<{
-        Body: { username: string; password: string };
+        Body: { username: string; password: string; totp?: string };
       }>,
       reply
     ) => {
@@ -110,13 +111,15 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       try {
-        const result = await loginUser(body.data.username, body.data.password);
+        const result = await loginUser(body.data.username, body.data.password, body.data.totp);
         trackEvent('login', result.user?.id);
         return result;
       } catch (error) {
         if (error instanceof AuthenticationError) {
           const statusCode =
-            error.code === 'INVALID_CREDENTIALS' ? 401 : 503;
+            error.code === '2FA_REQUIRED' ? 400
+            : error.code === 'INVALID_CREDENTIALS' ? 401
+            : 503;
           return reply.status(statusCode).send({
             error: error.message,
             code: error.code,

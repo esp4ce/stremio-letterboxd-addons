@@ -56,7 +56,7 @@ const semaphore = new Semaphore(MAX_CONCURRENT);
 // ── Public API ──────────────────────────────────────────────────────
 
 /**
- * Throttle + retry for all Letterboxd API calls.
+ * Throttle + retry for all external API calls.
  * 1. Limits concurrency via semaphore
  * 2. Paces requests with a minimum interval
  * 3. Retries on 429 with exponential backoff (fallback safety net)

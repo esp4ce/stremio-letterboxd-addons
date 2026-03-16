@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const loginBodySchema = z.object({
   username: z.string().min(1, 'Username is required'),
   password: z.string().min(1, 'Password is required'),
+  totp: z.string().optional(),
 });
 
 export type LoginBody = z.infer<typeof loginBodySchema>;
@@ -36,6 +37,7 @@ export const userPreferencesSchema = z.object({
   showRatings: z.boolean().default(true),
   catalogNames: z.record(z.string()).optional(),
   catalogOrder: z.array(z.string()).optional(),
+  sortVariants: z.record(z.string(), z.array(z.string())).optional(),
 });
 
 export const loginResponseSchema = z.object({

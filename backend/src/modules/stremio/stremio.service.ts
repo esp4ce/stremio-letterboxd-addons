@@ -1,4 +1,5 @@
 import { config, tmdbConfig } from '../../config/index.js';
+import { GENRE_NAMES } from '../letterboxd/letterboxd.client.js';
 import type { UserList } from '../letterboxd/letterboxd.client.js';
 import type { UserPreferences } from '../../db/repositories/user.repository.js';
 import type { PublicConfig } from '../../lib/config-encoding.js';
@@ -83,6 +84,65 @@ export const SORT_LABEL_TO_API: Record<string, string> = {
 const SORT_EXTRA = { name: 'genre', options: SORT_EXTRA_OPTIONS, isRequired: false, optionsLimit: 1 };
 const PUBLIC_SORT_EXTRA = { name: 'genre', options: PUBLIC_SORT_EXTRA_OPTIONS, isRequired: false, optionsLimit: 1 };
 
+const DECADE_OPTIONS = ['2020s', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s', '1950s', '1940s', '1930s', '1920s'];
+const GENRE_EXTRA = { name: 'genre', options: [...GENRE_NAMES, ...DECADE_OPTIONS], isRequired: false, optionsLimit: 1 };
+
+// Sort variant definitions (only high-value variants that justify a separate catalog)
+export const SORT_VARIANT_KEYS: Record<string, { label: string; sort?: string; special?: 'shuffle' | 'notWatched' }> = {
+  'shuffle': { label: 'Shuffle', special: 'shuffle' },
+  'not-watched': { label: 'Not Watched', special: 'notWatched' },
+  'popular': { label: 'Popular', sort: 'FilmPopularity' },
+};
+
+function expandWithSortVariants(catalogs: StremioCatalog[], sortVariants: Record<string, string[]>, allCatalogTemplates?: StremioCatalog[]): StremioCatalog[] {
+  if (!Object.keys(sortVariants).length) return catalogs;
+  const result: StremioCatalog[] = [];
+  const catalogMap = new Map(catalogs.map(c => [c.id, c]));
+
+  // Also index templates for catalogs that might not be in the active list
+  const templateMap = new Map<string, StremioCatalog>();
+  if (allCatalogTemplates) {
+    for (const t of allCatalogTemplates) templateMap.set(t.id, t);
+  }
+
+  // Add active catalogs with their variants inline
+  for (const cat of catalogs) {
+    result.push(cat);
+    const variants = sortVariants[cat.id];
+    if (variants) {
+      for (const key of variants) {
+        const variant = SORT_VARIANT_KEYS[key];
+        if (variant) {
+          result.push({
+            ...cat,
+            id: `${cat.id}--${key}`,
+            name: `${cat.name} (${variant.label})`,
+          });
+        }
+      }
+    }
+  }
+
+  // Add orphan variants (base catalog disabled but variant enabled)
+  for (const [catalogId, keys] of Object.entries(sortVariants)) {
+    if (catalogMap.has(catalogId)) continue; // already handled above
+    const template = templateMap.get(catalogId);
+    if (!template) continue;
+    for (const key of keys) {
+      const variant = SORT_VARIANT_KEYS[key];
+      if (variant) {
+        result.push({
+          ...template,
+          id: `${template.id}--${key}`,
+          name: `${template.name} (${variant.label})`,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
 const RECO_SORT_OPTIONS = [
   "Film Name",
   "Release Date (Newest)", "Release Date (Oldest)",
@@ -101,7 +161,7 @@ function getBaseCatalogs(displayName: string): StremioCatalog[] {
       type: 'movie',
       id: 'letterboxd-watchlist',
       name: `${displayName}'s Watchlist`,
-      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     },
     {
       type: 'movie',
@@ -119,7 +179,7 @@ function getBaseCatalogs(displayName: string): StremioCatalog[] {
       type: 'movie',
       id: 'letterboxd-liked-films',
       name: `${displayName}'s Liked Films`,
-      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     },
     ...(tmdbConfig.apiKey
       ? [
@@ -135,13 +195,13 @@ function getBaseCatalogs(displayName: string): StremioCatalog[] {
       type: 'movie',
       id: 'letterboxd-popular',
       name: 'Popular This Week',
-      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     },
     {
       type: 'movie',
       id: 'letterboxd-top250',
       name: 'Top 250 Narrative Features',
-      extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     },
   ];
 }
@@ -164,7 +224,7 @@ function listsToStremioCatalogs(lists: UserList[]): StremioCatalog[] {
     type: 'movie',
     id: `letterboxd-list-${list.id}`,
     name: list.name,
-    extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+    extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
   }));
 }
 
@@ -175,25 +235,32 @@ function listsToStremioCatalogs(lists: UserList[]): StremioCatalog[] {
 export function generateBaseManifest(): StremioManifest {
   return {
     id: 'community.stremboxd',
-    version: '1.0.3',
+    version: '1.1.0',
     name: 'Stremboxd',
     description: 'Letterboxd catalogs for Stremio: popular films, top 250, watchlists, and custom lists. Configure at https://stremboxd.com',
     logo: `${config.PUBLIC_URL}/logo.svg`,
     background: `${config.PUBLIC_URL}/logo.svg`,
-    resources: ['catalog'],
+    resources: [
+      'catalog',
+      {
+        name: 'meta',
+        types: ['movie'],
+        idPrefixes: ['tt'],
+      },
+    ],
     types: ['movie'],
     catalogs: [
       {
         type: 'movie',
         id: 'letterboxd-popular',
         name: 'Popular This Week',
-        extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+        extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
       },
       {
         type: 'movie',
         id: 'letterboxd-top250',
         name: 'Top 250 Narrative Features',
-        extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+        extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
       },
     ],
     behaviorHints: {
@@ -220,7 +287,7 @@ export function generatePublicManifest(
       type: 'movie',
       id: 'letterboxd-popular',
       name: 'Popular This Week',
-      extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     });
   }
 
@@ -229,7 +296,7 @@ export function generatePublicManifest(
       type: 'movie',
       id: 'letterboxd-top250',
       name: 'Top 250 Narrative Features',
-      extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     });
   }
 
@@ -239,7 +306,7 @@ export function generatePublicManifest(
       type: 'movie',
       id: 'letterboxd-watchlist',
       name: watchlistName,
-      extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     });
   }
 
@@ -249,7 +316,7 @@ export function generatePublicManifest(
       type: 'movie',
       id: 'letterboxd-liked-films',
       name: likedName,
-      extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     });
   }
 
@@ -258,7 +325,7 @@ export function generatePublicManifest(
       type: 'movie',
       id: `letterboxd-list-${listId}`,
       name: listNames?.get(listId) || `List ${listId}`,
-      extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+      extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
     });
   }
 
@@ -270,10 +337,13 @@ export function generatePublicManifest(
         type: 'movie',
         id: `letterboxd-watchlist-${username}`,
         name: `${extDisplayName}'s Watchlist`,
-        extra: [PUBLIC_SORT_EXTRA, { name: 'skip', isRequired: false }],
+        extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
       });
     }
   }
+
+  // Save all catalogs as templates before reordering (for orphan variant support)
+  const allPublicTemplates = [...catalogs];
 
   // Apply custom catalog names from config
   if (cfg.n) {
@@ -294,16 +364,26 @@ export function generatePublicManifest(
     catalogs = [...ordered, ...remaining.values()];
   }
 
+  // Expand sort variants for public config
+  catalogs = expandWithSortVariants(catalogs, cfg.s || {}, allPublicTemplates);
+
   const namePart = displayName ? ` for ${displayName}` : '';
 
   return {
     id: 'community.stremboxd',
-    version: '1.0.3',
+    version: '1.1.0',
     name: `Stremboxd${namePart}`,
     description: 'Letterboxd catalogs for Stremio. Configure at https://stremboxd.com',
     logo: `${config.PUBLIC_URL}/logo.svg`,
     background: `${config.PUBLIC_URL}/logo.svg`,
-    resources: ['catalog'],
+    resources: [
+      'catalog',
+      {
+        name: 'meta',
+        types: ['movie'],
+        idPrefixes: ['tt'],
+      },
+    ],
     types: ['movie'],
     catalogs,
     behaviorHints: {
@@ -324,7 +404,7 @@ export function generateManifest(user: {
 
   return {
     id: 'community.stremboxd',
-    version: '1.0.3',
+    version: '1.1.0',
     name: `Letterboxd for ${displayName}`,
     description: `Your personal Letterboxd ratings and watchlist synced to Stremio. Connected as ${user.username}.`,
     logo: `${config.PUBLIC_URL}/logo.svg`,
@@ -386,7 +466,7 @@ export function generateDynamicManifest(
         type: 'movie',
         id: `letterboxd-list-${ext.id}`,
         name: `${ext.name} (${ext.owner})`,
-        extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+        extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
       }));
 
     // Add external watchlists from preferences
@@ -395,7 +475,7 @@ export function generateDynamicManifest(
         type: 'movie',
         id: `letterboxd-watchlist-${ext.username}`,
         name: `${ext.displayName}'s Watchlist`,
-        extra: [SORT_EXTRA, { name: 'skip', isRequired: false }],
+        extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }],
       }));
 
     catalogs = [...filteredBase, ...ownListCatalogs, ...externalListCatalogs, ...externalWatchlistCatalogs];
@@ -426,9 +506,22 @@ export function generateDynamicManifest(
     catalogs = [...baseCatalogs, ...listCatalogs];
   }
 
+  // Expand sort variants (pass all possible catalogs as templates for orphan variants)
+  const allListCatalogs = listsToStremioCatalogs(lists);
+  const allTemplates = [...baseCatalogs, ...allListCatalogs];
+  if (preferences) {
+    for (const ext of preferences.externalLists) {
+      allTemplates.push({ type: 'movie', id: `letterboxd-list-${ext.id}`, name: `${ext.name} (${ext.owner})`, extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }] });
+    }
+    for (const ext of preferences.externalWatchlists || []) {
+      allTemplates.push({ type: 'movie', id: `letterboxd-watchlist-${ext.username}`, name: `${ext.displayName}'s Watchlist`, extra: [GENRE_EXTRA, { name: 'skip', isRequired: false }] });
+    }
+  }
+  catalogs = expandWithSortVariants(catalogs, preferences?.sortVariants || {}, allTemplates);
+
   return {
     id: 'community.stremboxd',
-    version: '1.0.3',
+    version: '1.1.0',
     name: `Letterboxd for ${displayName}`,
     description: `Your personal Letterboxd ratings and watchlist synced to Stremio. Connected as ${user.username}.`,
     logo: `${config.PUBLIC_URL}/logo.svg`,

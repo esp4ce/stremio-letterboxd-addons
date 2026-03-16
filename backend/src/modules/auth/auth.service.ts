@@ -3,6 +3,7 @@ import {
   getCurrentUser,
   createAuthenticatedClient,
   LetterboxdApiError,
+  TwoFactorRequiredError,
 } from '../letterboxd/letterboxd.client.js';
 import {
   upsertUser,
@@ -44,14 +45,21 @@ export class AuthenticationError extends Error {
 
 export async function loginUser(
   username: string,
-  password: string
+  password: string,
+  totp?: string
 ): Promise<AuthResult> {
-  logger.info({ username }, 'Login attempt');
+  logger.info({ username, has2fa: !!totp }, 'Login attempt');
 
   let tokens;
   try {
-    tokens = await authenticateWithPassword(username, password);
+    tokens = await authenticateWithPassword(username, password, totp);
   } catch (error) {
+    if (error instanceof TwoFactorRequiredError) {
+      throw new AuthenticationError(
+        '2FA required',
+        '2FA_REQUIRED'
+      );
+    }
     if (error instanceof LetterboxdApiError) {
       if (error.status === 401 || error.status === 400) {
         logger.warn({ username }, 'Invalid credentials');

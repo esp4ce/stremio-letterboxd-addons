@@ -46,6 +46,7 @@ interface PublicConfig {
   n?: Record<string, string>;
   w?: string[];
   o?: string[];
+  s?: Record<string, string[]>;
 }
 
 interface ToastItem {
@@ -105,11 +106,17 @@ export default function Configure() {
   const [showRatings, setShowRatings] = useState(true);
   const [publicCatalogNames, setPublicCatalogNames] = useState<Record<string, string>>({});
   const [publicCatalogOrder, setPublicCatalogOrder] = useState<string[]>([]);
+  const [publicSortVariants, setPublicSortVariants] = useState<Record<string, string[]>>({});
   const [generatedManifestUrl, setGeneratedManifestUrl] = useState<string | null>(null);
 
   // Shared
   const [externalListUrl, setExternalListUrl] = useState("");
   const [isResolvingList, setIsResolvingList] = useState(false);
+
+  // 2FA state
+  const [show2FA, setShow2FA] = useState(false);
+  const [totpCode, setTotpCode] = useState("");
+  const [is2FALoading, setIs2FALoading] = useState(false);
 
   const usernameRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -184,6 +191,8 @@ export default function Configure() {
     setGeneratedManifestUrl(null);
     setShowConfig(false);
     setShowPublicConfig(false);
+    setShow2FA(false);
+    setTotpCode("");
   };
 
   const returnToMainForm = () => {
@@ -245,6 +254,16 @@ export default function Configure() {
     );
   };
 
+  const applyLoginResult = (loginResult: LoginResponse) => {
+    setResult(loginResult);
+    const defaults = getDefaultPreferences(loginResult.lists);
+    const prefs = loginResult.preferences
+      ? { ...loginResult.preferences, catalogs: { ...defaults.catalogs, ...loginResult.preferences.catalogs } }
+      : defaults;
+    setPreferences(prefs);
+    setShowConfig(true);
+  };
+
   const handleSubmit = async () => {
     const username = usernameRef.current?.value?.trim();
     const password = passwordRef.current?.value?.trim();
@@ -272,18 +291,15 @@ export default function Configure() {
 
         if (!response.ok) {
           const errorData = data as LoginError;
+          if (errorData.code === "2FA_REQUIRED") {
+            setShow2FA(true);
+            setTotpCode("");
+            return;
+          }
           throw new Error(errorData.error || "Authentication failed");
         }
 
-        const loginResult = data as LoginResponse;
-        setResult(loginResult);
-
-        const defaults = getDefaultPreferences(loginResult.lists);
-        const prefs = loginResult.preferences
-          ? { ...loginResult.preferences, catalogs: { ...defaults.catalogs, ...loginResult.preferences.catalogs } }
-          : defaults;
-        setPreferences(prefs);
-        setShowConfig(true);
+        applyLoginResult(data as LoginResponse);
       } else {
         // Public flow (username only)
         const response = await fetch(`${BACKEND_URL}/auth/validate-username`, {
@@ -316,6 +332,37 @@ export default function Configure() {
       showErrorToast(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSubmit2FA = async () => {
+    const username = usernameRef.current?.value?.trim();
+    const password = passwordRef.current?.value?.trim();
+
+    if (!username || !password || !totpCode.trim()) return;
+
+    setIs2FALoading(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password, totp: totpCode.trim() }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        const errorData = data as LoginError;
+        throw new Error(errorData.error || "Authentication failed");
+      }
+
+      setShow2FA(false);
+      setTotpCode("");
+      applyLoginResult(data as LoginResponse);
+    } catch (err) {
+      showErrorToast(err instanceof Error ? err.message : "Invalid code");
+    } finally {
+      setIs2FALoading(false);
     }
   };
 
@@ -457,6 +504,10 @@ export default function Configure() {
       cfg.o = publicCatalogOrder;
     }
 
+    if (Object.keys(publicSortVariants).length > 0) {
+      cfg.s = publicSortVariants;
+    }
+
     if (usernameValidated) {
       cfg.u = usernameValidated.username;
       cfg.c.watchlist = publicWatchlist;
@@ -504,6 +555,7 @@ export default function Configure() {
     setPublicLikedFilms(false);
     setPublicCatalogNames({});
     setPublicCatalogOrder([]);
+    setPublicSortVariants({});
     setPasswordPreview("");
     if (passwordRef.current) passwordRef.current.value = "";
   };
@@ -519,6 +571,8 @@ export default function Configure() {
           onBack={returnToMainForm}
           preferences={preferences}
           onPreferencesChange={setPreferences}
+          sortVariants={preferences.sortVariants || {}}
+          onSortVariantsChange={(v) => setPreferences({ ...preferences, sortVariants: v })}
           onSave={handleSavePreferences}
           isSaving={isSavingPrefs}
           externalListUrl={externalListUrl}
@@ -558,6 +612,8 @@ export default function Configure() {
           onPublicCatalogNamesChange={setPublicCatalogNames}
           publicCatalogOrder={publicCatalogOrder}
           onPublicCatalogOrderChange={setPublicCatalogOrder}
+          publicSortVariants={publicSortVariants}
+          onPublicSortVariantsChange={setPublicSortVariants}
           externalListUrl={externalListUrl}
           onExternalListUrlChange={setExternalListUrl}
           onAddExternalList={handleResolvePublicList}
@@ -786,6 +842,63 @@ export default function Configure() {
           </div>
         </div>
       </div>
+      {show2FA && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="film-grain animate-fade-in w-full max-w-sm rounded-2xl border border-zinc-800 bg-zinc-900 p-7 shadow-2xl">
+            <h3 className="text-center text-lg font-semibold text-white">Two-Factor Authentication</h3>
+            <p className="mt-2 text-center text-xs text-zinc-400">
+              Enter the 6-digit code from your authenticator app.
+            </p>
+            <form
+              className="mt-5 space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSubmit2FA();
+              }}
+            >
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="000000"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                autoFocus
+                disabled={is2FALoading}
+                className="block w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-center text-2xl font-mono tracking-[0.3em] text-white placeholder-zinc-600 transition-colors focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={is2FALoading || totpCode.length !== 6}
+                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-[15px] font-semibold text-black transition-all hover:bg-zinc-200 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {is2FALoading ? (
+                  <>
+                    <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Verifying...
+                  </>
+                ) : (
+                  "Verify"
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShow2FA(false);
+                  setTotpCode("");
+                }}
+                className="w-full text-center text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+              >
+                Cancel
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
       <Footer />
       <ErrorToastStack />
     </div>

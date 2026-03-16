@@ -21,4 +21,5 @@ export interface UserPreferences {
   showReviews?: boolean;
   catalogNames?: Record<string, string>;
   catalogOrder?: string[];
+  sortVariants?: Record<string, string[]>;
 }
