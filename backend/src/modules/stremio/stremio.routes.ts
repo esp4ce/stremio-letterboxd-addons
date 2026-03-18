@@ -151,32 +151,34 @@ function parseExtra(extra?: string): Record<string, string> {
   return params;
 }
 
-function parseSortAndSkip(extra?: string): { skip: number; sort?: string; isShuffle: boolean; isNotWatched: boolean } {
+function parseCombinedFilter(extra?: string): {
+  skip: number;
+  includeGenre?: string[];
+  decade?: number;
+  sort?: string;
+  isShuffle: boolean;
+  isNotWatched: boolean;
+} {
   const params = parseExtra(extra);
   const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
-  const sortLabel = params['genre'];
-  const isShuffle = sortLabel === 'Shuffle';
-  const isNotWatched = sortLabel === 'Not Watched';
-  const sort = sortLabel && !isShuffle && !isNotWatched ? SORT_LABEL_TO_API[sortLabel] : undefined;
-  return { skip, sort, isShuffle, isNotWatched };
-}
+  const label = params['genre'];
 
-function parseGenreFilter(extra?: string): { skip: number; includeGenre?: string[]; decade?: number } {
-  const params = parseExtra(extra);
-  const skip = params['skip'] ? parseInt(params['skip'], 10) : 0;
-  const genreLabel = params['genre'];
+  if (!label) return { skip, isShuffle: false, isNotWatched: false };
 
-  if (!genreLabel) return { skip };
+  // Sort detection
+  if (label === 'Shuffle') return { skip, isShuffle: true, isNotWatched: false };
+  if (label === 'Not Watched') return { skip, isShuffle: false, isNotWatched: true };
+  if (SORT_LABEL_TO_API[label]) return { skip, sort: SORT_LABEL_TO_API[label], isShuffle: false, isNotWatched: false };
 
   // Decade detection: "1990s" → 1990
-  const decadeMatch = genreLabel.match(/^(\d{4})s$/);
-  if (decadeMatch) return { skip, decade: parseInt(decadeMatch[1]!, 10) };
+  const decadeMatch = label.match(/^(\d{4})s$/);
+  if (decadeMatch) return { skip, decade: parseInt(decadeMatch[1]!, 10), isShuffle: false, isNotWatched: false };
 
   // Genre detection: "Comedy" → ['7I']
-  const code = genreNameToCode(genreLabel);
-  if (code) return { skip, includeGenre: [code] };
+  const code = genreNameToCode(label);
+  if (code) return { skip, includeGenre: [code], isShuffle: false, isNotWatched: false };
 
-  return { skip };
+  return { skip, isShuffle: false, isNotWatched: false };
 }
 
 /**
@@ -939,29 +941,14 @@ async function handleCatalogRequest(
   const preferences = getUserPreferences(user);
   const showRatings = preferences?.showRatings !== false;
 
-  // Diary and friends use sort dropdown; everything else uses genre/decade filtering
-  let skip: number;
-  let sort: string | undefined;
-  let isShuffle: boolean;
-  let isNotWatched: boolean;
-  let includeGenre: string[] | undefined;
-  let decade: number | undefined;
-
-  if (baseCatalogId === 'letterboxd-diary' || baseCatalogId === 'letterboxd-friends' || baseCatalogId === 'letterboxd-recommended') {
-    const parsed = parseSortAndSkip(extra);
-    skip = parsed.skip;
-    sort = parsed.sort;
-    isShuffle = parsed.isShuffle;
-    isNotWatched = parsed.isNotWatched;
-  } else {
-    const parsed = parseGenreFilter(extra);
-    skip = parsed.skip;
-    includeGenre = parsed.includeGenre;
-    decade = parsed.decade;
-    sort = variantSort;
-    isShuffle = isVariantShuffle;
-    isNotWatched = isVariantNotWatched;
-  }
+  // All catalogs now use the combined filter (sort + genre + decade in one dropdown)
+  const parsed = parseCombinedFilter(extra);
+  let { skip } = parsed;
+  const sort = parsed.sort || variantSort;
+  const isShuffle = parsed.isShuffle || isVariantShuffle;
+  const isNotWatched = parsed.isNotWatched || isVariantNotWatched;
+  const includeGenre = parsed.includeGenre;
+  const decade = parsed.decade;
 
   // When filtering by "Not Watched", fetch from position 0 so the full catalog is cached
   const fetchSkip = isNotWatched ? 0 : skip;
@@ -1206,11 +1193,12 @@ async function handlePublicCatalogRequest(
   }
 
   const variantConfig = sortVariant ? SORT_VARIANT_KEYS[sortVariant] : undefined;
-  const isShuffle = variantConfig?.special === 'shuffle';
 
-  // Parse genre/decade from extra
-  const { skip, includeGenre, decade } = parseGenreFilter(extra);
-  const sort = variantConfig?.sort;
+  // Parse combined filter (sort + genre + decade)
+  const parsed = parseCombinedFilter(extra);
+  const { skip, includeGenre, decade } = parsed;
+  const isShuffle = parsed.isShuffle || (variantConfig?.special === 'shuffle');
+  const sort = parsed.sort || variantConfig?.sort;
 
   try {
     let result: { metas: StremioMeta[] } | null = null;
@@ -1330,8 +1318,8 @@ export async function stremioRoutes(app: FastifyInstance) {
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
 
-      const { skip, sort, isShuffle } = parseSortAndSkip(request.params.extra);
-      let result = await fetchPopularCatalogPublic(skip, true, sort);
+      const { skip, sort, isShuffle, includeGenre, decade } = parseCombinedFilter(request.params.extra);
+      let result = await fetchPopularCatalogPublic(skip, true, sort, includeGenre, decade);
       if (isShuffle) result = { metas: shuffleArray(result.metas) };
       return result;
     }
@@ -1356,8 +1344,8 @@ export async function stremioRoutes(app: FastifyInstance) {
       reply.header('Access-Control-Allow-Origin', '*');
       reply.header('Content-Type', 'application/json');
 
-      const { skip, sort, isShuffle } = parseSortAndSkip(request.params.extra);
-      let result = await fetchTop250CatalogPublic(skip, true, sort);
+      const { skip, sort, isShuffle, includeGenre, decade } = parseCombinedFilter(request.params.extra);
+      let result = await fetchTop250CatalogPublic(skip, true, sort, includeGenre, decade);
       if (isShuffle) result = { metas: shuffleArray(result.metas) };
       return result;
     }
