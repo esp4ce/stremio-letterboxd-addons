@@ -1,7 +1,9 @@
-import { WatchlistFilm, LogEntry, ListEntry, ActivityItem } from '../letterboxd/letterboxd.client.js';
+import { WatchlistFilm, LogEntry, ListEntry, ActivityItem, LetterboxdFilm } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
-import { imdbToLetterboxdCache } from '../../lib/cache.js';
+import { imdbToLetterboxdCache, cinemetaCache } from '../../lib/cache.js';
 import { serverConfig } from '../../config/index.js';
+import { getFullFilmInfoFromCinemeta } from './meta.service.js';
+import { mapConcurrent } from '../../lib/concurrency.js';
 
 const logger = createChildLogger('catalog-service');
 
@@ -13,8 +15,16 @@ export interface StremioMeta {
   year?: number;
   genres?: string[];
   director?: string[];
+  cast?: string[];
+  writer?: string[];
   runtime?: string;
   description?: string;
+  releaseInfo?: string;
+  imdbRating?: string;
+  background?: string;
+  trailers?: Array<{ source: string; type: string }>;
+  /** @internal rank suffix to append after cinemeta description (e.g. "#42") */
+  _rankSuffix?: string;
 }
 
 /** Shape shared by WatchlistFilm and LogEntryFilm */
@@ -198,9 +208,6 @@ export function transformListEntryToMeta(entry: ListEntry, showRatings = true): 
   // Cache IMDb → Letterboxd mapping
   imdbToLetterboxdCache.set(imdbId, film.id);
 
-  // Build description: "#42" (rank only, for ranked lists)
-  const description = entry.rank != null ? `#${entry.rank}` : undefined;
-
   return {
     id: imdbId,
     type: 'movie',
@@ -210,7 +217,7 @@ export function transformListEntryToMeta(entry: ListEntry, showRatings = true): 
     genres: film.genres?.map((g) => g.name),
     director: film.directors?.map((d) => d.name),
     runtime: film.runTime ? `${film.runTime} min` : undefined,
-    description,
+    _rankSuffix: entry.rank != null ? `#${entry.rank}` : undefined,
   };
 }
 
@@ -325,4 +332,112 @@ export function cacheFilmMapping(film: WatchlistFilm): void {
   if (imdbId) {
     imdbToLetterboxdCache.set(imdbId, film.id);
   }
+}
+
+/**
+ * Transform LetterboxdFilm search results to Stremio metas
+ */
+export function transformSearchResultsToMetas(films: LetterboxdFilm[]): StremioMeta[] {
+  const metas: StremioMeta[] = [];
+
+  for (const film of films) {
+    const imdbId = getImdbId(film);
+    if (!imdbId) continue;
+
+    imdbToLetterboxdCache.set(imdbId, film.id);
+
+    const directors = film.contributions
+      ?.find(c => c.type === 'Director')
+      ?.contributors.map(d => d.name);
+
+    metas.push({
+      id: imdbId,
+      type: 'movie',
+      name: film.name,
+      poster: getPosterUrl(film),
+      year: film.releaseYear,
+      genres: film.genres?.map(g => g.name),
+      director: directors,
+      runtime: film.runTime ? `${film.runTime} min` : undefined,
+      description: film.description,
+    });
+  }
+
+  return metas;
+}
+
+const ENRICH_CONCURRENCY = 10;
+
+/**
+ * Format minutes as "Xh Ymin" (e.g. 148 → "2h 28min")
+ */
+function formatRuntime(runtime?: string): string | undefined {
+  if (!runtime) return undefined;
+  const minutes = parseInt(runtime, 10);
+  if (isNaN(minutes) || minutes <= 0) return runtime;
+  if (minutes < 60) return `${minutes}min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
+
+/**
+ * Apply cached Cinemeta data to a meta (synchronous, no network)
+ */
+function applyCachedCinemeta(meta: StremioMeta): void {
+  const cinemeta = cinemetaCache.get(meta.id);
+  if (!cinemeta) return;
+
+  // Description: use cinemeta synopsis, append rank suffix if present
+  if (!meta.description && cinemeta.description) {
+    meta.description = meta._rankSuffix
+      ? `${cinemeta.description}\n\n${meta._rankSuffix}`
+      : cinemeta.description;
+  }
+
+  if (cinemeta.background) meta.background = cinemeta.background;
+  if (cinemeta.releaseInfo) meta.releaseInfo = cinemeta.releaseInfo;
+  else if (cinemeta.year) meta.releaseInfo = String(cinemeta.year);
+  if (cinemeta.imdbRating) meta.imdbRating = cinemeta.imdbRating;
+  if (cinemeta.cast?.length) meta.cast = cinemeta.cast;
+  if (cinemeta.writer?.length) meta.writer = cinemeta.writer;
+  if (cinemeta.trailers?.length) meta.trailers = cinemeta.trailers;
+
+  // Runtime: prefer Cinemeta, format as hours
+  meta.runtime = formatRuntime(cinemeta.runtime || meta.runtime);
+
+  // Cleanup internal field before sending to Stremio
+  delete meta._rankSuffix;
+}
+
+/**
+ * Enrich catalog metas with Cinemeta data (description, background, imdbRating, releaseInfo).
+ *
+ * Two-phase approach for speed:
+ * 1. Synchronously apply any cached Cinemeta data (instant)
+ * 2. Fetch missing entries from Cinemeta in parallel, then apply
+ *
+ * Cache misses are fetched concurrently. On subsequent requests,
+ * the Cinemeta cache (1h TTL) makes enrichment near-instant.
+ */
+export async function enrichMetasWithCinemeta(metas: StremioMeta[]): Promise<StremioMeta[]> {
+  // Phase 1: apply from cache (instant)
+  const uncached: StremioMeta[] = [];
+  for (const meta of metas) {
+    if (cinemetaCache.get(meta.id)) {
+      applyCachedCinemeta(meta);
+    } else {
+      uncached.push(meta);
+    }
+  }
+
+  // Phase 2: fetch missing in parallel, then apply
+  if (uncached.length > 0) {
+    await mapConcurrent(uncached, ENRICH_CONCURRENCY, async (meta) => {
+      await getFullFilmInfoFromCinemeta(meta.id); // populates cache
+      applyCachedCinemeta(meta);
+    });
+  }
+
+  return metas;
 }
