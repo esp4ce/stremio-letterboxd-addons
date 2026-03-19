@@ -1,23 +1,23 @@
 # Stremboxd
 
-Unofficial Stremio addon that syncs your Letterboxd data.
+Unofficial Stremio addon that syncs your Letterboxd data — watchlist, diary, friends, lists, and more.
 
-[stremboxd.com](https://stremboxd.com) · [Configure](https://stremboxd.com/configure)
+[stremboxd.com](https://stremboxd.com) · [Configure](https://stremboxd.com/configure) · [FAQ](https://stremboxd.com/faq)
 
 ## Features
 
-- Watchlist & diary
-- Private lists
-- Friends activity
-- Ratings on every film
-- Rate & like from Stremio
-- Toggle watched & watchlist
+- Watchlist, diary & friends activity
+- Custom & private lists
+- Genre, decade & sort filters
+- Search Letterboxd films from Stremio
+- Ratings displayed on every film
+- Rate, like & toggle watched from Stremio
+- 2FA support
 - All platforms
-- Letterboxd links
 
 ## Two ways to use it
 
-**Public mode** — Enter your username, no password needed.
+**Public mode** — Enter your username, no login needed.
 Access popular films, Top 250, your public watchlist, and custom lists.
 
 **Full mode** — Log in with your Letterboxd credentials.
