@@ -21,6 +21,7 @@ import {
   getListEntries as rawGetListEntries,
   getList as rawGetList,
   getFilms as rawGetFilms,
+  searchFilms as rawSearchFilms,
   searchMemberByUsername as rawSearchMemberByUsername,
   getMember as rawGetMember,
 } from '../letterboxd/letterboxd.client.js';
@@ -36,6 +37,8 @@ import {
   getTmdbId,
   getPosterUrl,
   buildPosterUrl,
+  enrichMetasWithCinemeta,
+  transformSearchResultsToMetas,
   StremioMeta,
 } from './catalog.service.js';
 import { buildLetterboxdStreams, findFilmByImdb, getRawCinemetaMeta, getFilmRatingData, getPopularReviewsText } from './meta.service.js';
@@ -59,6 +62,7 @@ import {
   tmdbToImdbCache,
   userCatalogCache,
   watchedImdbCache,
+  imdbToLetterboxdCache,
 } from '../../lib/cache.js';
 import { trackEvent, type EventType } from '../../lib/metrics.js';
 import { generateAnonId } from '../../lib/anonymous-id.js';
@@ -71,17 +75,6 @@ import { getTmdbRecommendations, getTmdbExternalIds } from '../../lib/tmdb-clien
 
 const logger = createChildLogger('stremio-routes');
 
-/**
- * Fisher-Yates shuffle (non-mutating)
- */
-function shuffleArray<T>(arr: T[]): T[] {
-  const result = [...arr];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j]!, result[i]!];
-  }
-  return result;
-}
 
 const CATALOG_EVENT_MAP: Record<string, EventType> = {
   'letterboxd-popular': 'catalog_popular',
@@ -943,9 +936,9 @@ async function handleCatalogRequest(
 
   // All catalogs now use the combined filter (sort + genre + decade in one dropdown)
   const parsed = parseCombinedFilter(extra);
-  let { skip } = parsed;
-  const sort = parsed.sort || variantSort;
+  const { skip } = parsed;
   const isShuffle = parsed.isShuffle || isVariantShuffle;
+  const sort = isShuffle ? 'Shuffle' : (parsed.sort || variantSort);
   const isNotWatched = parsed.isNotWatched || isVariantNotWatched;
   const includeGenre = parsed.includeGenre;
   const decade = parsed.decade;
@@ -993,6 +986,14 @@ async function handleCatalogRequest(
       const listName = listNameCache.get(listId);
       trackEvent('catalog_list', userId, { listId, ...(listName && { listName }) });
       result = await fetchListCatalog(user, listId, fetchSkip, showRatings, sort, includeGenre, decade);
+    } else if (baseCatalogId === 'letterboxd-search') {
+      const params = parseExtra(extra);
+      const query = params['search'];
+      if (!query) return { metas: [] };
+      trackEvent('catalog_search', userId);
+      const results = await callWithAppToken((token) => rawSearchFilms(token, query, { perPage: 20 }));
+      const metas = transformSearchResultsToMetas(results.items);
+      return { metas: await enrichMetasWithCinemeta(metas) };
     } else {
       logger.warn({ catalogId: baseCatalogId }, 'Unknown catalog requested');
       return { metas: [] };
@@ -1009,9 +1010,8 @@ async function handleCatalogRequest(
       }
     }
 
-    if (isShuffle) {
-      result = { metas: shuffleArray(result.metas) };
-    }
+    // Enrich with Cinemeta (description, background, imdbRating, releaseInfo)
+    result = { metas: await enrichMetasWithCinemeta(result.metas) };
 
     return result;
 
@@ -1198,7 +1198,7 @@ async function handlePublicCatalogRequest(
   const parsed = parseCombinedFilter(extra);
   const { skip, includeGenre, decade } = parsed;
   const isShuffle = parsed.isShuffle || (variantConfig?.special === 'shuffle');
-  const sort = parsed.sort || variantConfig?.sort;
+  const sort = isShuffle ? 'Shuffle' : (parsed.sort || variantConfig?.sort);
 
   try {
     let result: { metas: StremioMeta[] } | null = null;
@@ -1233,11 +1233,21 @@ async function handlePublicCatalogRequest(
       }
     }
 
+    // Search catalog
+    if (baseCatalogId === 'letterboxd-search') {
+      const params = parseExtra(extra);
+      const query = params['search'];
+      if (!query) return { metas: [] };
+      trackEvent('catalog_search', undefined);
+      const results = await callWithAppToken((token) => rawSearchFilms(token, query, { perPage: 20 }));
+      const metas = transformSearchResultsToMetas(results.items);
+      return { metas: await enrichMetasWithCinemeta(metas) };
+    }
+
     if (!result) return { metas: [] };
 
-    if (isShuffle) {
-      result = { metas: shuffleArray(result.metas) };
-    }
+    // Enrich with Cinemeta (description, background, imdbRating, releaseInfo)
+    result = { metas: await enrichMetasWithCinemeta(result.metas) };
 
     return result;
   } catch (error) {
@@ -1319,9 +1329,8 @@ export async function stremioRoutes(app: FastifyInstance) {
       reply.header('Content-Type', 'application/json');
 
       const { skip, sort, isShuffle, includeGenre, decade } = parseCombinedFilter(request.params.extra);
-      let result = await fetchPopularCatalogPublic(skip, true, sort, includeGenre, decade);
-      if (isShuffle) result = { metas: shuffleArray(result.metas) };
-      return result;
+      const effectiveSort = isShuffle ? 'Shuffle' : sort;
+      return await fetchPopularCatalogPublic(skip, true, effectiveSort, includeGenre, decade);
     }
   );
 
@@ -1345,9 +1354,8 @@ export async function stremioRoutes(app: FastifyInstance) {
       reply.header('Content-Type', 'application/json');
 
       const { skip, sort, isShuffle, includeGenre, decade } = parseCombinedFilter(request.params.extra);
-      let result = await fetchTop250CatalogPublic(skip, true, sort, includeGenre, decade);
-      if (isShuffle) result = { metas: shuffleArray(result.metas) };
-      return result;
+      const effectiveSort = isShuffle ? 'Shuffle' : sort;
+      return await fetchTop250CatalogPublic(skip, true, effectiveSort, includeGenre, decade);
     }
   );
 
@@ -1500,7 +1508,25 @@ export async function stremioRoutes(app: FastifyInstance) {
         return { meta: null };
       }
 
-      return { meta: rawMeta };
+      const meta: Record<string, unknown> = { ...rawMeta };
+      meta['behaviorHints'] = {
+        ...(meta['behaviorHints'] as Record<string, unknown> || {}),
+        defaultVideoId: imdbId,
+      };
+
+      // Best-effort Letterboxd link from cache
+      const letterboxdId = imdbToLetterboxdCache.get(imdbId);
+      if (letterboxdId) {
+        const existingLinks = (meta['links'] as Array<Record<string, string>>) || [];
+        existingLinks.push({
+          name: 'Letterboxd',
+          category: 'Letterboxd',
+          url: `https://letterboxd.com/film/${letterboxdId}/`,
+        });
+        meta['links'] = existingLinks;
+      }
+
+      return { meta };
     }
   );
 
@@ -1707,20 +1733,28 @@ export async function stremioRoutes(app: FastifyInstance) {
             // Rating lookup failed — skip badge
           }
 
+          // Letterboxd film page link
+          const existingLinks = (meta['links'] as Array<{ name: string; category: string; url: string }>) || [];
+          existingLinks.push({
+            name: 'Letterboxd',
+            category: 'Letterboxd',
+            url: `https://letterboxd.com/film/${letterboxdFilmId}/`,
+          });
+          meta['links'] = existingLinks;
+
           // Popular reviews as a distinct links section (appears before Summary in Stremio)
           const showReviews = metaPreferences?.showReviews !== false;
           if (showReviews) {
             try {
               const reviewsText = await getPopularReviewsText(client, letterboxdFilmId);
               if (reviewsText) {
-                const existingLinks = (meta['links'] as Array<{ name: string; category: string; url: string }>) || [];
                 const letterboxdUrl = `https://letterboxd.com/film/${letterboxdFilmId}/reviews/`;
                 const reviewLinks = reviewsText.split('\n\n').map(line => ({
                   name: line,
                   category: 'Letterboxd Popular Reviews',
                   url: letterboxdUrl,
                 }));
-                meta['links'] = [...existingLinks, ...reviewLinks];
+                meta['links'] = [...(meta['links'] as Array<Record<string, string>>), ...reviewLinks];
               }
             } catch {
               // Reviews fetch failed — skip
@@ -1730,6 +1764,12 @@ export async function stremioRoutes(app: FastifyInstance) {
       } catch {
         // Non-critical — fall through to raw Cinemeta response
       }
+
+      // behaviorHints.defaultVideoId for instant playback
+      meta['behaviorHints'] = {
+        ...(meta['behaviorHints'] as Record<string, unknown> || {}),
+        defaultVideoId: imdbId,
+      };
 
       return { meta };
     }

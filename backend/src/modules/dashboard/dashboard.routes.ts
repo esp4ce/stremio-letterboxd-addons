@@ -13,18 +13,9 @@ import { getFullFilmInfoFromCinemeta } from '../stremio/meta.service.js';
 import { callWithAppToken } from '../../lib/app-client.js';
 import { getList as rawGetList, getFilmByLid as rawGetFilmByLid } from '../letterboxd/letterboxd.client.js';
 import { createChildLogger } from '../../lib/logger.js';
+import { mapConcurrent } from '../../lib/concurrency.js';
 
 const logger = createChildLogger('dashboard');
-
-/** Run async tasks with limited concurrency */
-async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += concurrency) {
-    const batch = items.slice(i, i + concurrency);
-    results.push(...await Promise.all(batch.map(fn)));
-  }
-  return results;
-}
 
 const loginSchema = z.object({
   password: z.string(),

@@ -89,6 +89,7 @@ export async function getFullFilmInfoFromCinemeta(imdbId: string): Promise<Cinem
     runtime?: string;
     description?: string;
     trailers?: Array<{ source: string; type: string }>;
+    imdbRating?: string;
   };
 
   if (!meta.name) return null;
@@ -108,6 +109,8 @@ export async function getFullFilmInfoFromCinemeta(imdbId: string): Promise<Cinem
     runtime: meta.runtime,
     description: meta.description,
     trailers: meta.trailers,
+    releaseInfo: meta.releaseInfo,
+    imdbRating: meta.imdbRating,
   };
 
   logger.info({ imdbId, name: meta.name, year, hasTrailers: !!meta.trailers?.length }, 'Got film info from Cinemeta');

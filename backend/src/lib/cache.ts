@@ -90,12 +90,15 @@ export interface CinemetaFilmData {
   runtime?: string;
   description?: string;
   trailers?: Array<{ source: string; type: string }>;
+  releaseInfo?: string;
+  imdbRating?: string;
 }
 
 // Cinemeta cache (long TTL since this data rarely changes)
 export const cinemetaCache = createCache<CinemetaFilmData>({
   ttl: 60 * 60 * 1000, // 1 hour
 });
+
 
 // Raw Cinemeta meta cache — stores the full unfiltered meta object for pass-through
 export const cinemetaRawCache = createCache<Record<string, unknown>>({

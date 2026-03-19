@@ -87,6 +87,13 @@ const PUBLIC_SORT_OPTIONS = SORT_OPTIONS.filter(
 const COMBINED_EXTRA = { name: 'genre', options: [...SORT_OPTIONS, ...GENRE_NAMES, ...DECADE_OPTIONS], isRequired: false, optionsLimit: 1 };
 const PUBLIC_COMBINED_EXTRA = { name: 'genre', options: [...PUBLIC_SORT_OPTIONS, ...GENRE_NAMES, ...DECADE_OPTIONS], isRequired: false, optionsLimit: 1 };
 
+const SEARCH_CATALOG: StremioCatalog = {
+  type: 'movie',
+  id: 'letterboxd-search',
+  name: 'Search Letterboxd',
+  extra: [{ name: 'search', isRequired: true }],
+};
+
 // Sort variant definitions (only high-value variants that justify a separate catalog)
 export const SORT_VARIANT_KEYS: Record<string, { label: string; sort?: string; special?: 'shuffle' | 'notWatched' }> = {
   'shuffle': { label: 'Shuffle', special: 'shuffle' },
@@ -262,6 +269,7 @@ export function generateBaseManifest(): StremioManifest {
         name: 'Top 250 Narrative Features',
         extra: [PUBLIC_COMBINED_EXTRA, { name: 'skip', isRequired: false }],
       },
+      SEARCH_CATALOG,
     ],
     behaviorHints: {
       configurable: true,
@@ -367,6 +375,8 @@ export function generatePublicManifest(
   // Expand sort variants for public config
   catalogs = expandWithSortVariants(catalogs, cfg.s || {}, allPublicTemplates);
 
+  catalogs.push(SEARCH_CATALOG);
+
   const namePart = displayName ? ` for ${displayName}` : '';
 
   return {
@@ -422,7 +432,7 @@ export function generateManifest(user: {
       },
     ],
     types: ['movie'],
-    catalogs: getBaseCatalogs(displayName),
+    catalogs: [...getBaseCatalogs(displayName), SEARCH_CATALOG],
     behaviorHints: {
       configurable: false,
       configurationRequired: false,
@@ -518,6 +528,7 @@ export function generateDynamicManifest(
     }
   }
   catalogs = expandWithSortVariants(catalogs, preferences?.sortVariants || {}, allTemplates);
+  catalogs.push(SEARCH_CATALOG);
 
   return {
     id: 'community.stremboxd',
