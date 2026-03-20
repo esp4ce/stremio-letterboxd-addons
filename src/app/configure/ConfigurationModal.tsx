@@ -261,6 +261,19 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     else (props as FullModeProps).onSortVariantsChange(v);
   };
 
+  /** Remove a catalog and all its variant children from order + sortVariants. */
+  const stripCatalogAndVariants = (
+    catId: string,
+    order: string[],
+    variants: Record<string, string[]>,
+  ): { newOrder: string[]; newVariants: Record<string, string[]> } => {
+    const prefix = `${catId}--`;
+    const newOrder = order.filter((id) => id !== catId && !id.startsWith(prefix));
+    const newVariants = { ...variants };
+    delete newVariants[catId];
+    return { newOrder, newVariants };
+  };
+
   const getCatalogVariants = (catalogId: string): string[] => {
     return getSortVariants()[catalogId] || [];
   };
@@ -382,50 +395,72 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
     const catalogId = catalogKeyToId[key]!;
     const enabling = !getCatalogEnabled(key);
     const currentOrder = getCatalogOrder();
-    const newOrder = enabling
-      ? [...currentOrder, catalogId]
-      : currentOrder.filter((id) => id !== catalogId);
 
-    if (isPublic) {
-      const p = props as PublicModeProps;
-      if (key === "popular" || key === "top250") {
-        p.onPublicCatalogsChange({ ...p.publicCatalogs, [key]: enabling });
+    if (enabling) {
+      const newOrder = [...currentOrder, catalogId];
+      if (isPublic) {
+        const p = props as PublicModeProps;
+        if (key === "popular" || key === "top250") p.onPublicCatalogsChange({ ...p.publicCatalogs, [key]: true });
+        if (key === "watchlist" && hasUsername) p.onPublicWatchlistChange(true);
+        if (key === "likedFilms" && hasUsername) p.onPublicLikedFilmsChange(true);
+        p.onPublicCatalogOrderChange(newOrder);
+        return;
       }
-      if (key === "watchlist" && hasUsername) p.onPublicWatchlistChange(enabling);
-      if (key === "likedFilms" && hasUsername) p.onPublicLikedFilmsChange(enabling);
-      p.onPublicCatalogOrderChange(newOrder);
-      return;
+      const p = props as FullModeProps;
+      p.onPreferencesChange({ ...p.preferences, catalogs: { ...p.preferences.catalogs, [key]: true }, catalogOrder: newOrder });
+    } else {
+      const { newOrder, newVariants } = stripCatalogAndVariants(catalogId, currentOrder, getSortVariants());
+      if (isPublic) {
+        const p = props as PublicModeProps;
+        if (key === "popular" || key === "top250") p.onPublicCatalogsChange({ ...p.publicCatalogs, [key]: false });
+        if (key === "watchlist" && hasUsername) p.onPublicWatchlistChange(false);
+        if (key === "likedFilms" && hasUsername) p.onPublicLikedFilmsChange(false);
+        p.onPublicSortVariantsChange(newVariants);
+        p.onPublicCatalogOrderChange(newOrder);
+        return;
+      }
+      const p = props as FullModeProps;
+      p.onPreferencesChange({
+        ...p.preferences,
+        catalogs: { ...p.preferences.catalogs, [key]: false },
+        sortVariants: newVariants,
+        catalogOrder: newOrder,
+      });
     }
-    const p = props as FullModeProps;
-    p.onPreferencesChange({
-      ...p.preferences,
-      catalogs: { ...p.preferences.catalogs, [key]: enabling },
-      catalogOrder: newOrder,
-    });
   };
 
   const toggleOwnList = (listId: string) => {
     const catId = `letterboxd-list-${listId}`;
     const isSelected = isOwnListSelected(listId);
     const currentOrder = getCatalogOrder();
-    const newOrder = !isSelected
-      ? [...currentOrder, catId]
-      : currentOrder.filter((id) => id !== catId);
 
-    if (isPublic) {
-      const p = props as PublicModeProps;
-      const updated = isSelected
-        ? p.publicOwnLists.filter((id) => id !== listId)
-        : [...p.publicOwnLists, listId];
-      p.onPublicOwnListsChange(updated);
-      p.onPublicCatalogOrderChange(newOrder);
-      return;
+    if (!isSelected) {
+      const newOrder = [...currentOrder, catId];
+      if (isPublic) {
+        const p = props as PublicModeProps;
+        p.onPublicOwnListsChange([...p.publicOwnLists, listId]);
+        p.onPublicCatalogOrderChange(newOrder);
+        return;
+      }
+      const p = props as FullModeProps;
+      p.onPreferencesChange({ ...p.preferences, ownLists: [...p.preferences.ownLists, listId], catalogOrder: newOrder });
+    } else {
+      const { newOrder, newVariants } = stripCatalogAndVariants(catId, currentOrder, getSortVariants());
+      if (isPublic) {
+        const p = props as PublicModeProps;
+        p.onPublicOwnListsChange(p.publicOwnLists.filter((id) => id !== listId));
+        p.onPublicSortVariantsChange(newVariants);
+        p.onPublicCatalogOrderChange(newOrder);
+        return;
+      }
+      const p = props as FullModeProps;
+      p.onPreferencesChange({
+        ...p.preferences,
+        ownLists: p.preferences.ownLists.filter((id) => id !== listId),
+        sortVariants: newVariants,
+        catalogOrder: newOrder,
+      });
     }
-    const p = props as FullModeProps;
-    const updated = isSelected
-      ? p.preferences.ownLists.filter((id) => id !== listId)
-      : [...p.preferences.ownLists, listId];
-    p.onPreferencesChange({ ...p.preferences, ownLists: updated, catalogOrder: newOrder });
   };
 
   const selectAllOwnLists = () => {
@@ -445,14 +480,22 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
 
   const deselectAllOwnLists = () => {
     const ownListCatIds = new Set(lists.map((l) => `letterboxd-list-${l.id}`));
-    const newOrder = getCatalogOrder().filter((id) => !ownListCatIds.has(id));
+    // Also strip variant children (e.g. "letterboxd-list-ABC--shuffle")
+    const newOrder = getCatalogOrder().filter(
+      (id) => !ownListCatIds.has(id) && !Array.from(ownListCatIds).some((catId) => id.startsWith(`${catId}--`)),
+    );
+    const newVariants = Object.fromEntries(
+      Object.entries(getSortVariants()).filter(([catId]) => !ownListCatIds.has(catId)),
+    );
     if (isPublic) {
-      (props as PublicModeProps).onPublicOwnListsChange([]);
-      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+      const p = props as PublicModeProps;
+      p.onPublicOwnListsChange([]);
+      p.onPublicSortVariantsChange(newVariants);
+      p.onPublicCatalogOrderChange(newOrder);
       return;
     }
     const p = props as FullModeProps;
-    p.onPreferencesChange({ ...p.preferences, ownLists: [], catalogOrder: newOrder });
+    p.onPreferencesChange({ ...p.preferences, ownLists: [], sortVariants: newVariants, catalogOrder: newOrder });
   };
 
   const isOwnListSelected = (listId: string): boolean => {
@@ -462,32 +505,38 @@ export default function ConfigurationModal(props: ConfigurationModalProps) {
 
   const removeExternalList = (listId: string) => {
     const catId = `letterboxd-list-${listId}`;
-    const newOrder = getCatalogOrder().filter((id) => id !== catId);
+    const { newOrder, newVariants } = stripCatalogAndVariants(catId, getCatalogOrder(), getSortVariants());
     if (isPublic) {
-      (props as PublicModeProps).onRemovePublicList(listId);
-      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+      const p = props as PublicModeProps;
+      p.onRemovePublicList(listId);
+      p.onPublicSortVariantsChange(newVariants);
+      p.onPublicCatalogOrderChange(newOrder);
       return;
     }
     const p = props as FullModeProps;
     p.onPreferencesChange({
       ...p.preferences,
       externalLists: p.preferences.externalLists.filter((l) => l.id !== listId),
+      sortVariants: newVariants,
       catalogOrder: newOrder,
     });
   };
 
   const removeExternalWatchlist = (username: string) => {
     const catId = `letterboxd-watchlist-${username}`;
-    const newOrder = getCatalogOrder().filter((id) => id !== catId);
+    const { newOrder, newVariants } = stripCatalogAndVariants(catId, getCatalogOrder(), getSortVariants());
     if (isPublic) {
-      (props as PublicModeProps).onRemovePublicExternalWatchlist(username);
-      (props as PublicModeProps).onPublicCatalogOrderChange(newOrder);
+      const p = props as PublicModeProps;
+      p.onRemovePublicExternalWatchlist(username);
+      p.onPublicSortVariantsChange(newVariants);
+      p.onPublicCatalogOrderChange(newOrder);
       return;
     }
     const p = props as FullModeProps;
     p.onPreferencesChange({
       ...p.preferences,
       externalWatchlists: (p.preferences.externalWatchlists || []).filter((w) => w.username !== username),
+      sortVariants: newVariants,
       catalogOrder: newOrder,
     });
   };
