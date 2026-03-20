@@ -175,6 +175,19 @@ function parseCombinedFilter(extra?: string): {
 }
 
 /**
+ * Fisher-Yates shuffle for server-side randomization.
+ * Used for endpoints that don't support sort=Shuffle natively (e.g. /films).
+ */
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j]!, a[i]!];
+  }
+  return a;
+}
+
+/**
  * Create authenticated client for a user (with LRU token cache)
  */
 async function createClientForUser(user: User): Promise<AuthenticatedClient> {
@@ -492,6 +505,9 @@ async function fetchLikedFilmsCatalog(
   const cached = getUserCatalogCached(cacheKey, skip, CATALOG_PAGE_SIZE);
   if (cached) return cached;
 
+  const isShuffle = sort === 'Shuffle';
+  const apiSort = isShuffle ? 'DateLatestFirst' : (sort || 'DateLatestFirst');
+
   const client = await createClientForUser(user);
 
   const allFilms: WatchlistFilm[] = [];
@@ -504,7 +520,7 @@ async function fetchLikedFilmsCatalog(
       member: user.letterboxd_id,
       memberRelationship: 'Liked',
       includeFriends: 'None',
-      sort: sort || 'DateLatestFirst',
+      sort: apiSort,
       perPage: 100,
       cursor,
       includeGenre,
@@ -515,7 +531,8 @@ async function fetchLikedFilmsCatalog(
     cursor = response.cursor;
   } while (cursor && page < 10);
 
-  const allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  let allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  if (isShuffle) allMetas = shuffleArray(allMetas);
   for (const film of allFilms) cacheFilmMapping(film);
 
   const result = setUserCatalog(user.id, cacheKey, allMetas, skip, CATALOG_PAGE_SIZE);
@@ -822,8 +839,9 @@ async function fetchLikedFilmsCatalogPublic(
   includeGenre?: string[],
   decade?: number
 ): Promise<{ metas: StremioMeta[] }> {
-  const effectiveSort = sort || 'DateLatestFirst';
-  const cacheKey = `liked:${memberId}:${showRatings}:${effectiveSort}${filterSuffix(includeGenre, decade)}`;
+  const isShuffle = sort === 'Shuffle';
+  const effectiveSort = isShuffle ? 'DateLatestFirst' : (sort || 'DateLatestFirst');
+  const cacheKey = `liked:${memberId}:${showRatings}:${sort || 'default'}${filterSuffix(includeGenre, decade)}`;
   const cached = likedFilmsCache.get(cacheKey);
   if (cached) {
     const metas = cached.metas.slice(skip, skip + CATALOG_PAGE_SIZE);
@@ -852,7 +870,8 @@ async function fetchLikedFilmsCatalogPublic(
     cursor = response.cursor;
   } while (cursor && page < 10);
 
-  const allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  let allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  if (isShuffle) allMetas = shuffleArray(allMetas);
   for (const film of allFilms) cacheFilmMapping(film);
 
   likedFilmsCache.set(cacheKey, { metas: allMetas });
@@ -1026,7 +1045,8 @@ async function handleCatalogRequest(
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function fetchPopularCatalogPublic(skip: number, showRatings: boolean, sort?: string, includeGenre?: string[], decade?: number): Promise<{ metas: StremioMeta[] }> {
-  const effectiveSort = sort || 'FilmPopularityThisWeek';
+  const isShuffle = sort === 'Shuffle';
+  const effectiveSort = isShuffle ? 'FilmPopularityThisWeek' : (sort || 'FilmPopularityThisWeek');
   const cacheKey = cacheKeyPopular(showRatings, sort, includeGenre, decade);
   const cached = popularCatalogCache.get(cacheKey);
   if (cached) {
@@ -1047,7 +1067,8 @@ async function fetchPopularCatalogPublic(skip: number, showRatings: boolean, sor
     cursor = response.cursor;
   } while (cursor && page < 10);
 
-  const allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  let allMetas = transformWatchlistToMetas(allFilms, showRatings);
+  if (isShuffle) allMetas = shuffleArray(allMetas);
   for (const film of allFilms) cacheFilmMapping(film);
 
   popularCatalogCache.set(cacheKey, { metas: allMetas });
