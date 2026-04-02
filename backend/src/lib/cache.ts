@@ -61,7 +61,7 @@ export interface FilmLookupCacheEntry {
   film: unknown; // LetterboxdFilm — stored as unknown to avoid circular import
 }
 export const filmLookupCache = createCache<FilmLookupCacheEntry>({
-  maxSize: 1000,
+  maxSize: 200,
   ttl: 60 * 60 * 1000, // 1 hour
 });
 
@@ -96,14 +96,14 @@ export interface CinemetaFilmData {
 
 // Cinemeta cache (long TTL since this data rarely changes)
 export const cinemetaCache = createCache<CinemetaFilmData>({
-  maxSize: 2000,
+  maxSize: 500,
   ttl: 60 * 60 * 1000, // 1 hour
 });
 
 
 // Raw Cinemeta meta cache — stores the full unfiltered meta object for pass-through
 export const cinemetaRawCache = createCache<Record<string, unknown>>({
-  maxSize: 500,
+  maxSize: 100,
   ttl: 60 * 60 * 1000, // 1 hour
 });
 
@@ -150,7 +150,7 @@ export const likedFilmsCache = createCache<{ metas: StremioMeta[] }>({
 
 // Poster cache (from poster.service.ts - imported dynamically to avoid circular deps)
 export const posterCache = createCache<Buffer>({
-  maxSize: 500,
+  maxSize: 50,
   ttl: 60 * 60 * 1000,
 });
 
@@ -159,7 +159,7 @@ export const posterCache = createCache<Buffer>({
 import type { AuthenticatedClient } from '../modules/letterboxd/letterboxd.client.js';
 
 export const userClientCache = createCache<{ client: AuthenticatedClient; expiresAt: number }>({
-  maxSize: 500,
+  maxSize: 100,
   ttl: 30 * 60 * 1000, // 30min max, expiresAt checked manually
 });
 
@@ -178,19 +178,19 @@ export const watchedImdbCache = createCache<{ ids: Set<string> }>({
 
 // Film reviews formatted text cache
 export const filmReviewsCache = createCache<string>({
-  maxSize: 500,
+  maxSize: 100,
   ttl: 60 * 60 * 1000, // 1 hour
 });
 
 // Recommendations cache (expensive to compute, stable results)
 export const recommendationCache = createCache<{ metas: StremioMeta[] }>({
-  maxSize: 50,
+  maxSize: 20,
   ttl: 6 * 60 * 60 * 1000, // 6h
 });
 
 // TMDB ID → IMDb ID mapping (never changes)
 export const tmdbToImdbCache = createCache<string>({
-  maxSize: 10_000,
+  maxSize: 2000,
   ttl: 7 * 24 * 60 * 60 * 1000, // 7 days
 });
 
@@ -275,6 +275,21 @@ export function getCacheMetrics() {
       hitRate: tokenTotal > 0 ? parseFloat((cacheMetrics.tokenHits / tokenTotal * 100).toFixed(1)) : 0,
     },
   };
+}
+
+// ── Emergency purge (called when memory is critically high) ─────────────────
+
+export function emergencyPurge(): void {
+  const heavyCaches = [posterCache, cinemetaCache, cinemetaRawCache, filmLookupCache, recommendationCache, filmReviewsCache];
+  let cleared = 0;
+  for (const cache of heavyCaches) {
+    cleared += cache.size;
+    cache.clear();
+  }
+  if (cleared > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(`[OOM-GUARD] Emergency purge: cleared ${cleared} entries from heavy caches`);
+  }
 }
 
 // ── Cache stats export ───────────────────────────────────────────────────────
